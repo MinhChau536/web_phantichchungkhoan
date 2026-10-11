@@ -70,8 +70,8 @@ p, span, label {
 
 /* ── Metric Cards Light (Chữ tối đậm, hover nổi bật) ── */
 [data-testid="stMetric"] {
-    background: #ffffff !important;
-    border: 1px solid #e2e8f0 !important;
+    background: transparent !important;
+    border: 1px solid rgba(15, 23, 42, 0.16) !important;
     border-radius: 14px !important;
     padding: 14px 18px !important;
     box-shadow: 0 1px 4px rgba(0, 0, 0, 0.05) !important;
@@ -109,8 +109,8 @@ p, span, label {
 
 /* ── Cards Light ── */
 .metric-card {
-    background: #ffffff !important;
-    border: 1px solid #e2e8f0 !important;
+    background: transparent !important;
+    border: 1px solid rgba(15, 23, 42, 0.16) !important;
     border-radius: 14px !important;
     padding: 16px 20px !important;
     margin-bottom: 14px !important;
@@ -125,10 +125,10 @@ p, span, label {
 
 /* ── Page Header Light ── */
 .page-header {
-    background: #ffffff !important;
+    background: transparent !important;
     border-radius: 14px !important;
     padding: 20px 24px !important;
-    border: 1px solid #e2e8f0 !important;
+    border: 1px solid rgba(15, 23, 42, 0.16) !important;
     margin-bottom: 20px !important;
     box-shadow: 0 1px 4px rgba(0, 0, 0, 0.04) !important;
     transition: all 0.28s ease !important;
@@ -168,8 +168,8 @@ p, span, label {
 
 /* ── Inputs & Selects Light ── */
 .stTextInput input, .stSelectbox select, div[data-baseweb="select"] {
-    background: #ffffff !important;
-    border: 1px solid #cbd5e1 !important;
+    background: transparent !important;
+    border: 1px solid #94a3b8 !important;
     color: #0f172a !important;
     border-radius: 10px !important;
     transition: all 0.2s ease !important;
@@ -185,7 +185,8 @@ p, span, label {
 
 /* ── Tabs Light ── */
 .stTabs [data-baseweb="tab-list"] {
-    background: #f1f5f9 !important;
+    background: transparent !important;
+    border: 1px solid rgba(15, 23, 42, 0.14) !important;
     border-radius: 10px !important;
     padding: 5px !important;
     gap: 6px !important;
@@ -209,9 +210,9 @@ p, span, label {
 
 /* ── DataFrames Light ── */
 .stDataFrame {
-    border: 1px solid #e2e8f0 !important;
+    border: 1px solid rgba(15, 23, 42, 0.16) !important;
     border-radius: 10px !important;
-    background: #ffffff !important;
+    background: transparent !important;
     transition: all 0.25s ease !important;
 }
 .stDataFrame:hover {
@@ -219,10 +220,72 @@ p, span, label {
     box-shadow: 0 6px 18px rgba(2, 132, 199, 0.1) !important;
 }
 [data-testid="stDataFrame"] thead tr th {
-    background: #f1f5f9 !important;
-    color: #1e293b !important;
+    background: transparent !important;
+    color: #0b1220 !important;
     font-weight: 700 !important;
 }
+
+/* ── Bảng / khung TRONG SUỐT trên nền động + chữ nổi bật (giao diện sáng) ── */
+/* Bảng st.dataframe vẽ bằng canvas: hòa trộn "multiply" làm nền trắng của ô trở nên trong suốt, chữ tối giữ nguyên */
+[data-testid="stDataFrame"] canvas, [data-testid="stDataFrameResizable"] canvas { mix-blend-mode: multiply; }
+[data-testid="stDataFrame"] > div, [data-testid="stDataFrameResizable"] { background: transparent !important; }
+[data-testid="stTable"] table, [data-testid="stTable"] th, [data-testid="stTable"] td,
+[data-testid="stMarkdownContainer"] table, [data-testid="stMarkdownContainer"] th, [data-testid="stMarkdownContainer"] td {
+    background: transparent !important; color: #0b1220 !important; border-color: rgba(15, 23, 42, 0.14) !important;
+}
+[data-testid="stExpander"] details, [data-testid="stExpander"] summary, [data-testid="stExpanderDetails"],
+[data-testid="stForm"], [data-testid="stVerticalBlockBorderWrapper"], [data-testid="stFileUploaderDropzone"],
+div[data-baseweb="input"], div[data-baseweb="base-input"], div[data-baseweb="textarea"], div[data-baseweb="select"] > div,
+[data-testid="stNumberInput"] input, [data-testid="stNumberInput"] button, [data-testid="stDateInput"] input,
+.stTextArea textarea, [data-testid="stMultiSelect"] div[data-baseweb="select"] > div {
+    background: transparent !important; background-color: transparent !important;
+}
+[data-testid="stExpander"] details { border-color: rgba(15, 23, 42, 0.16) !important; }
+/* viền sáng nhẹ quanh chữ TỐI (tiêu đề, nhãn ô nhập, số liệu, chú thích, bảng) để nổi trên nền động –
+   không áp cho chữ trắng trên nền màu (nhãn khuyến nghị, nút…) */
+[data-testid="stMain"] h1, [data-testid="stMain"] h2, [data-testid="stMain"] h3, [data-testid="stMain"] h4,
+[data-testid="stMain"] [data-testid="stWidgetLabel"], [data-testid="stMetricValue"], [data-testid="stMetricLabel"],
+[data-testid="stMain"] [data-testid="stCaptionContainer"], [data-testid="stMain"] .page-header p,
+[data-testid="stMain"] [data-testid="stMarkdownContainer"] td, [data-testid="stMain"] [data-testid="stMarkdownContainer"] th,
+[data-testid="stMain"] [data-testid="stMarkdownContainer"] > p, [data-testid="stMain"] [data-testid="stMarkdownContainer"] li,
+[data-testid="stMain"] [data-testid="stExpander"] summary {
+    text-shadow: 0 0 2px rgba(255, 255, 255, 0.9), 0 0 6px rgba(255, 255, 255, 0.55);
+}
+[data-testid="stMain"] [data-testid="stMarkdownContainer"] span[style*="background"], [data-testid="stMain"] [style*="color: rgb(255, 255, 255)"],
+[data-testid="stMain"] [data-testid="stMarkdownContainer"] div[style*="background"] * { text-shadow: none !important; }
+/* chữ trắng viết trực tiếp trong HTML (nhãn khuyến nghị, thẻ màu) giữ màu trắng */
+[data-testid="stMain"] [style*="color:#fff"], [data-testid="stMain"] [style*="color: #fff"],
+[data-testid="stMain"] [style*="color:#ffffff"], [data-testid="stMain"] [style*="color: #ffffff"],
+[data-testid="stMain"] [style*="color:#fff"] *, [data-testid="stMain"] [style*="color: #fff"] *,
+[data-testid="stMain"] [style*="color: rgb(255, 255, 255)"], [data-testid="stMain"] [style*="color: rgb(255, 255, 255)"] * { color: #ffffff !important; }
+[data-testid="stMain"] p, [data-testid="stMain"] li, [data-testid="stMain"] label { color: #1e293b !important; }
+[data-testid="stCaptionContainer"], [data-testid="stCaptionContainer"] p { color: #334155 !important; }
+/* chữ trắng trên nền màu (nút, nhãn, tab đang chọn) không cần viền sáng */
+[data-testid="stMain"] button, [data-testid="stMain"] button *, .mo-badge, .rc-chip, .rc-badge, .rc-badge *,
+[data-testid="stMain"] [aria-selected="true"], [data-testid="stMain"] [aria-selected="true"] *,
+[data-testid="stMain"] [aria-checked="true"], [data-testid="stMain"] [aria-checked="true"] * { text-shadow: none !important; }
+/* nút phụ (màu trắng) và ô chọn → trong suốt có viền */
+[data-testid="stMain"] button[data-testid="stBaseButton-secondary"], [data-testid="stMain"] button[kind="secondary"] {
+    background: transparent !important; border: 1px solid rgba(15, 23, 42, 0.28) !important; color: #0b1220 !important;
+    box-shadow: none !important;
+}
+[data-testid="stMain"] button[data-testid="stBaseButton-secondary"] p, [data-testid="stMain"] button[kind="secondary"] p { color: #0b1220 !important; font-weight: 700 !important; }
+[data-testid="stMain"] [data-baseweb="input"], [data-testid="stMain"] [data-baseweb="input"] *,
+[data-testid="stMain"] [data-baseweb="select"], [data-testid="stMain"] [data-baseweb="select"] *,
+[data-testid="stMain"] [data-baseweb="textarea"], [data-testid="stMain"] [data-baseweb="textarea"] *,
+[data-testid="stMain"] [data-testid="stTextInput"] div, [data-testid="stMain"] [data-testid="stSelectbox"] div,
+[data-testid="stMain"] [data-testid="stNumberInput"] div, [data-testid="stMain"] [data-testid="stDateInput"] div,
+[data-testid="stMain"] [data-testid="stTextArea"] div, [data-testid="stMain"] [data-testid="stMultiSelect"] div {
+    background: transparent !important; background-color: transparent !important;
+}
+[data-testid="stMain"] [data-testid="stTextInput"] input, [data-testid="stMain"] [data-testid="stNumberInput"] input,
+[data-testid="stMain"] [data-testid="stDateInput"] input { color: #0b1220 !important; font-weight: 600 !important; }
+[data-testid="stMain"] [data-baseweb="input"], [data-testid="stMain"] [data-baseweb="select"] > div,
+[data-testid="stMain"] [data-baseweb="textarea"] { border: 1px solid #94a3b8 !important; border-radius: 10px !important; }
+[data-testid="stMain"] [data-baseweb="input"] input, [data-testid="stMain"] [data-baseweb="select"] div[value],
+[data-testid="stMain"] [data-baseweb="select"] span { color: #0b1220 !important; font-weight: 600 !important; }
+div[data-baseweb="select"] > div, div[data-baseweb="select"] > div > div { background: transparent !important; background-color: transparent !important; }
+div[data-baseweb="select"] { border-color: #94a3b8 !important; }
 
 /* ── Radio buttons hover in Sidebar ── */
 div[role="radiogroup"] label {
@@ -441,6 +504,14 @@ p, span, label {
     color: #ffffff !important;
     font-weight: 700 !important;
 }
+[data-testid="stMain"] [data-testid="stSelectbox"] div, [data-testid="stMain"] [data-testid="stMultiSelect"] div,
+[data-testid="stMain"] [data-testid="stDateInput"] div, [data-testid="stMain"] [data-testid="stNumberInput"] div {
+    background-color: #161b22 !important;
+}
+[data-testid="stMain"] [data-testid="stSelectbox"] *, [data-testid="stMain"] [data-testid="stMultiSelect"] input,
+[data-testid="stMain"] [data-testid="stDateInput"] input, [data-testid="stMain"] [data-testid="stNumberInput"] input { color: #f0f6fc !important; }
+/* st.dataframe vẽ bằng canvas theo giao diện sáng của Streamlit → đảo màu để thành nền tối, chữ sáng */
+[data-testid="stDataFrame"] canvas, [data-testid="stDataFrameResizable"] canvas { filter: invert(0.9) hue-rotate(180deg); }
 
 /* ── Radio buttons hover in Sidebar ── */
 div[role="radiogroup"] label {
