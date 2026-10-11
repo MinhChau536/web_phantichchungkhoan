@@ -1,0 +1,24 @@
+# ── Môi trường & bí mật (KHÔNG đẩy lên git) ──
+.venv/
+venv/
+env/
+.env
+
+# ── Python ──
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# ── Dữ liệu sinh ra khi chạy app ──
+data/cache/
+data/*.duckdb
+data/*.duckdb.wal
+data/documents/
+reports/output/
+debug_*.txt
+
+# ── Trình soạn thảo / hệ điều hành ──
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
