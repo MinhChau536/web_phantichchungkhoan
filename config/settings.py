@@ -49,7 +49,7 @@ class Settings:
     ]
     # Thứ tự ưu tiên nguồn BCTC (nguồn sau bù phần nguồn trước thiếu)
     FINANCIAL_SOURCES: list = [
-        s.strip().lower() for s in os.getenv("FINANCIAL_SOURCES", "vnstock_vci,vnstock_kbs,vietstock,pdf").split(",")
+        s.strip().lower() for s in os.getenv("FINANCIAL_SOURCES", "vnstock_vci,vnstock_kbs,vietstock,arminer,pdf").split(",")
         if s.strip()
     ]
     # Thứ tự ưu tiên nguồn tài liệu PDF (BCTN / BCTC)
