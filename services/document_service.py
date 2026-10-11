@@ -3,7 +3,8 @@ Kho tài liệu doanh nghiệp: Báo cáo thường niên (BCTN) & BCTC dạng P
 
 Nguồn tìm tài liệu (theo settings.DOCUMENT_SOURCES, có thể đổi thứ tự):
   - vietstock : trang "Tải tài liệu" của mã trên finance.vietstock.vn
-  - cafef     : trang/endpoint tài liệu của CafeF
+  - cafef     : trang/endpoint tài liệu của CafeF (chỉ có BCTC)
+  - vietstock_static : kho file tĩnh Vietstock – Báo cáo thường niên theo năm
   - website   : trang Quan hệ cổ đông / Nhà đầu tư trên website doanh nghiệp (lấy từ hồ sơ công ty)
   - upload    : người dùng tự tải file lên (luôn hoạt động)
 Tất cả đều là đọc trang web công khai → có thể hỏng khi trang đổi cấu trúc; khi đó
@@ -76,6 +77,35 @@ def classify_document(title: str, url: str = "") -> Dict[str, Any]:
         "consolidated": None if doc_type in ("annual_report", "other") else
         (False if re.search(r"\brieng\b|cong ty me|separate", text) else True),
     }
+
+
+# File BCTC/BCTN của CafeF nằm trên CDN "cafef1.mediacdn.vn"; endpoint của CafeF đôi khi trả link
+# sang "cafefnew.mediacdn.vn" (hoặc đường dẫn tương đối trên cafef.vn) → mở ra "File not found".
+_CAFEF_CDN = ["cafef1.mediacdn.vn", "cafefnew.mediacdn.vn"]
+
+
+def _is_cafef_file(url: str) -> bool:
+    u = urlparse(url or "")
+    return (u.netloc in _CAFEF_CDN or u.netloc.endswith("cafef.vn")) and "/Images/Uploaded/" in u.path
+
+
+def normalize_doc_url(url: Optional[str]) -> Optional[str]:
+    """Đưa link file CafeF về máy chủ CDN đang phục vụ file (cafef1.mediacdn.vn)."""
+    if not isinstance(url, str) or not url.strip():
+        return None                      # file tải lên không có link (NaN/None)
+    if not _is_cafef_file(url):
+        return url
+    return urlparse(url)._replace(netloc=_CAFEF_CDN[0], scheme="https").geturl()
+
+
+def url_candidates(url: Optional[str]) -> List[str]:
+    """Các địa chỉ thử lần lượt khi tải file (link chuẩn hóa trước, link gốc sau, rồi các CDN khác)."""
+    if not isinstance(url, str) or not url.strip():
+        return []
+    cands = [normalize_doc_url(url), url]
+    if _is_cafef_file(url):
+        cands += [urlparse(url)._replace(netloc=h, scheme="https").geturl() for h in _CAFEF_CDN]
+    return list(dict.fromkeys(cands))
 
 
 def period_key_for(doc: Dict[str, Any]) -> Optional[int]:
@@ -196,6 +226,44 @@ class CafefDocs(_WebSource):
         return out
 
 
+class VietstockStaticDocs(_WebSource):
+    """
+    Báo cáo thường niên trên kho file tĩnh của Vietstock, đường dẫn theo quy luật:
+      https://static2.vietstock.vn/data/<SÀN>/<NĂM>/BCTN/VN/<MÃ>_Baocaothuongnien_<NĂM>.pdf
+    Dò các năm gần nhất (song song), chỉ giữ link thật sự trả về file PDF.
+    (Endpoint BCTC của CafeF không có BCTN nên cần nguồn này.)
+    """
+    name = "vietstock_static"
+    YEARS_BACK = 10
+    _EXCH = {"HOSE": "HOSE", "HSX": "HOSE", "VNINDEX": "HOSE", "HNX": "HNX", "HNXINDEX": "HNX",
+             "UPCOM": "UPCOM", "UPCOMINDEX": "UPCOM"}
+
+    def _is_pdf(self, url: str) -> bool:
+        try:
+            r = self.s.get(url, timeout=8, stream=True)
+            ok = r.status_code == 200 and next(r.iter_content(8), b"")[:4] == b"%PDF"
+            r.close()
+            return ok
+        except Exception:
+            return False
+
+    def list(self, symbol, info):
+        from concurrent.futures import ThreadPoolExecutor
+        exch = self._EXCH.get(str((info or {}).get("exchange", "")).upper())
+        exchanges = [exch] if exch else ["HOSE", "HNX", "UPCOM"]
+        this_year = datetime.now().year
+        cands = [(y, f"https://static2.vietstock.vn/data/{ex}/{y}/BCTN/VN/{symbol}_Baocaothuongnien_{y}.pdf")
+                 for y in range(this_year, this_year - self.YEARS_BACK - 1, -1) for ex in exchanges]
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            hits = list(pool.map(lambda c: (c, self._is_pdf(c[1])), cands))
+        out, years = [], set()
+        for (y, url), ok in hits:
+            if ok and y not in years:
+                years.add(y)
+                out.append((f"Báo cáo thường niên năm {y}", url))
+        return out
+
+
 class CompanyWebsiteDocs(_WebSource):
     """Dò trang Quan hệ cổ đông trên website doanh nghiệp (tối đa 8 trang, cùng tên miền)."""
     name = "website"
@@ -226,7 +294,8 @@ class CompanyWebsiteDocs(_WebSource):
                 for h, t in re.findall(r'<a[^>]+href="([^"#]+)"[^>]*>(.*?)</a>', html, flags=re.I | re.S)]
 
 
-_SOURCES = {"vietstock": VietstockDocs, "cafef": CafefDocs, "website": CompanyWebsiteDocs}
+_SOURCES = {"vietstock": VietstockDocs, "vietstock_static": VietstockStaticDocs, "cafef": CafefDocs,
+            "website": CompanyWebsiteDocs}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -253,7 +322,7 @@ class DocumentService:
         symbol = symbol.upper()
         report: List[str] = []
         seen = set()
-        for name in list(sources or settings.DOCUMENT_SOURCES) + ["website"]:
+        for name in list(sources or settings.DOCUMENT_SOURCES) + ["vietstock_static", "website"]:
             cls = _SOURCES.get(name)
             if cls is None or name in report:
                 continue
@@ -273,9 +342,23 @@ class DocumentService:
                 self.db.upsert_document({
                     "doc_id": _doc_id(symbol, url), "symbol": symbol, "year": meta["year"],
                     "period": f"Q{meta['quarter']}" if meta["quarter"] else None,
-                    "doc_type": meta["doc_type"], "title": title[:300], "url": url, "source": name,
+                    "doc_type": meta["doc_type"], "title": title[:300], "url": normalize_doc_url(url), "source": name,
                 })
+        self.add_zenodo_reports(symbol)
         return self.list_documents(symbol)
+
+    def add_zenodo_reports(self, symbol: str) -> int:
+        """Thêm các BCTN có trong kho Zenodo (theo chỉ mục đóng gói sẵn – không cần mạng để liệt kê)."""
+        from services import zenodo_source as zs
+        n = 0
+        for r in zs.list_reports(symbol):
+            url = zs.make_url(r["archive_period"], r["relative_path"])
+            self.db.upsert_document({
+                "doc_id": _doc_id(symbol.upper(), url), "symbol": symbol.upper(), "year": r["year"], "period": None,
+                "doc_type": "annual_report", "title": f"Báo cáo thường niên năm {r['year']} (kho Zenodo, {r['size_mb']:.1f} MB)",
+                "url": url, "source": "zenodo"})
+            n += 1
+        return n
 
     def add_link(self, symbol: str, url: str, title: str = "") -> Dict[str, Any]:
         """Người dùng dán link PDF trực tiếp."""
@@ -289,6 +372,12 @@ class DocumentService:
     def list_documents(self, symbol: str) -> pd.DataFrame:
         df = self.db.get_documents(symbol.upper())
         if not df.empty:
+            for col in ("url", "local_path", "title", "source"):   # NaN → None (file tải lên không có link)
+                if col in df.columns:
+                    df[col] = pd.Series([v if isinstance(v, str) and v.strip() else None for v in df[col]],
+                                        index=df.index, dtype=object)
+            # sửa cả link cũ đã lưu (CafeF CDN)
+            df["url"] = pd.Series([normalize_doc_url(u) for u in df["url"]], index=df.index, dtype=object)
             df["doc_type_label"] = df["doc_type"].map(DOC_TYPES).fillna("Khác")
             df["downloaded"] = df["local_path"].apply(lambda p: bool(p) and Path(str(p)).exists())
         return df
@@ -296,14 +385,32 @@ class DocumentService:
     # ── Tải về / tải lên ──
     def download(self, doc: Dict[str, Any]) -> Optional[Path]:
         url = doc.get("url")
-        if not url:
+        if not isinstance(url, str) or not url:
             return None
-        try:
-            r = self.session.get(url, timeout=60)
-            if r.status_code != 200 or not r.content:
+        if url.startswith("zenodo://"):
+            from services import zenodo_source as zs
+            try:
+                content = zs.fetch_pdf(*zs.parse_url(url), session=self.session)
+            except Exception as exc:
+                logger.warning("Tải từ Zenodo thất bại %s: %s", url, exc)
                 return None
-        except Exception as exc:
-            logger.warning("Tải tài liệu thất bại %s: %s", url, exc)
+            path = self._dir(doc["symbol"]) / f"{doc.get('year') or 'na'}_{doc.get('doc_type')}_{doc['doc_id']}.pdf"
+            path.write_bytes(content)
+            self.db.upsert_document({**doc, "local_path": str(path), "size_bytes": len(content)})
+            return path
+        r = None
+        for cand in url_candidates(url):
+            try:
+                resp = self.session.get(cand, timeout=60)
+            except Exception as exc:
+                logger.warning("Tải tài liệu thất bại %s: %s", cand, exc)
+                continue
+            body = resp.content or b""
+            # một số CDN trả 200 kèm JSON báo lỗi ("File not found") thay vì 404
+            if resp.status_code == 200 and body and not body.lstrip()[:1] == b"{":
+                r, url = resp, cand
+                break
+        if r is None:
             return None
         ext = Path(urlparse(url).path).suffix.lower() or ".pdf"
         if r.content[:4] == b"%PDF":
@@ -330,13 +437,31 @@ class DocumentService:
         return doc
 
     # ── Trích số liệu ──
-    def extract(self, doc: Dict[str, Any]) -> Dict[str, Any]:
+    def extract(self, doc: Dict[str, Any], use_ocr: bool = True, progress=None) -> Dict[str, Any]:
+        """
+        Trích số liệu 1 file. Kết quả được lưu cạnh file (<tên>.extract.json) để lần sau không phải đọc/OCR lại.
+        use_ocr=False: không chạy OCR mới (dùng cho nguồn dự phòng tự động) – vẫn dùng kết quả OCR đã lưu.
+        """
         path = doc.get("local_path")
         if not path or not Path(path).exists():
             return {"values": {}, "note": "Chưa tải tài liệu về máy"}
         if not str(path).lower().endswith(".pdf"):
             return {"values": {}, "note": "Chỉ trích được từ file PDF"}
-        res = extract_financials(Path(path).read_bytes())
+        p = Path(path)
+        cache_f = p.with_suffix(".extract.json")
+        res = None
+        if cache_f.exists() and cache_f.stat().st_mtime >= p.stat().st_mtime:
+            try:
+                res = json.loads(cache_f.read_text(encoding="utf-8"))
+            except Exception:
+                res = None
+        if res is None or (use_ocr and not res.get("values") and res.get("method") != "ocr"):
+            res = extract_financials(p.read_bytes(), use_ocr=use_ocr, progress=progress)
+            if res.get("values") or res.get("method") == "ocr":
+                try:
+                    cache_f.write_text(json.dumps(res, ensure_ascii=False), encoding="utf-8")
+                except Exception:
+                    pass
         res["period_key"] = period_key_for(doc)
         return res
 
@@ -353,7 +478,7 @@ class DocumentService:
             meta = classify_document(str(d.get("title") or ""), str(d.get("url") or ""))
             if meta.get("consolidated") is False:
                 continue
-            res = self.extract(d.to_dict())
+            res = self.extract(d.to_dict(), use_ocr=False)     # không tự OCR khi tải BCTC
             if res.get("values") and res.get("period_key"):
                 records.append((res["period_key"], res["values"]))
         return to_wide(records)

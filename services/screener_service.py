@@ -157,8 +157,9 @@ def compare(symbols: List[str], svc_factory: Optional[Callable[[str], Any]] = No
                 prices[s] = px.set_index("timestamp")["close"].astype(float)
         except Exception:
             continue
-    norm = pd.DataFrame(prices).dropna(how="all")
+    raw = pd.DataFrame(prices).sort_index().dropna(how="all")
+    norm = raw.copy()
     if not norm.empty:
         norm = norm.ffill().dropna()
         norm = norm / norm.iloc[0] * 100 if not norm.empty else norm
-    return {"table": table, "normalized_prices": norm}
+    return {"table": table, "normalized_prices": norm, "prices": raw}

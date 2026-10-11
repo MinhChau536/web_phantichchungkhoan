@@ -40,8 +40,15 @@ class StockService:
     """Full analysis pipeline for a single stock ticker."""
 
     def __init__(self, symbol: str, days: int = 365, fin_period: str = "year",
-                 fin_years: int = 10, repository: Optional[DataRepository] = None):
+                 fin_years: int = 10, repository: Optional[DataRepository] = None, as_of=None):
+        """as_of: "định giá tại ngày" – None = dùng giá hiện tại; một ngày (str/date/Timestamp) = mọi dữ liệu
+        (giá, chỉ số, BCTC, beta) được cắt về đúng thời điểm đó, không dùng thông tin công bố sau ngày này."""
         self.symbol = symbol.upper().strip()
+        self.as_of: Optional[pd.Timestamp] = None
+        if as_of is not None and str(as_of).strip():
+            d = pd.Timestamp(as_of).normalize()
+            if d < pd.Timestamp(datetime.now().date()):
+                self.as_of = d
         self.days = days
         self.fin_period = fin_period
         self.fin_years = fin_years
@@ -58,14 +65,41 @@ class StockService:
 
     # ─────────────────── Data ────────────────────────────────────────────────
 
+    # ── Điểm thời gian (as_of) ──
+    def _cut_px(self, df: Optional[pd.DataFrame]) -> pd.DataFrame:
+        """Bỏ mọi phiên sau ngày định giá."""
+        if df is None or df.empty or self.as_of is None:
+            return df if df is not None else pd.DataFrame()
+        ts = pd.to_datetime(df["timestamp"] if "timestamp" in df.columns else df.index)
+        out = df[(ts <= self.as_of + pd.Timedelta(hours=23, minutes=59)).to_numpy()].copy()
+        out.attrs = dict(getattr(df, "attrs", {}))
+        return out.reset_index(drop=True) if "timestamp" in out.columns else out
+
+    def _history(self, symbol: str, days: int, force_refresh: bool = False) -> pd.DataFrame:
+        if self.as_of is None:
+            return self.repo.get_price_history(symbol, days=days, force_refresh=force_refresh)
+        return self._cut_px(self.repo.get_price_history(symbol, end_date=str(self.as_of.date()), days=days,
+                                                        force_refresh=force_refresh))
+
+    def fin_available(self, key: int, period: str) -> bool:
+        """BCTC năm y coi như công bố từ 1/4/(y+1); BCTC quý coi như công bố 45 ngày sau khi kết thúc quý."""
+        if self.as_of is None:
+            return True
+        from analytics.valuation_engine import annual_available
+        k = int(key)
+        if period == "year" or k % 10 == 0:
+            return annual_available(k, self.as_of)
+        q_end = pd.Timestamp(year=k // 10, month=3 * (k % 10), day=1) + pd.offsets.MonthEnd(0)
+        return self.as_of >= q_end + pd.Timedelta(days=45)
+
     def get_price_df(self, force_refresh: bool = False) -> pd.DataFrame:
         if self._price_df is None or force_refresh:
-            self._price_df = self.repo.get_price_history(self.symbol, days=self.days, force_refresh=force_refresh)
+            self._price_df = self._history(self.symbol, self.days, force_refresh)
         return self._price_df
 
     def get_index_df(self) -> pd.DataFrame:
         if self._index_df is None:
-            self._index_df = self.repo.get_index_history("VNINDEX", days=self.days)
+            self._index_df = self._history("VNINDEX", self.days)
         return self._index_df
 
     def get_company_info(self) -> Dict[str, Any]:
@@ -74,6 +108,13 @@ class StockService:
         return self._company_info
 
     def get_current_price(self) -> Optional[Dict[str, Any]]:
+        if self._current is None and self.as_of is not None:      # định giá tại ngày: giá đóng cửa phiên ≤ ngày đó
+            px = self.get_price_df()
+            self._current = ({"symbol": self.symbol, "price": float(px["close"].iloc[-1]),
+                              "timestamp": str(pd.Timestamp(px["timestamp"].iloc[-1]).date()),
+                              "source": f"Giá đóng cửa (định giá tại ngày {self.as_of:%d/%m/%Y})", "as_of": True}
+                             if px is not None and not px.empty else {})
+            return self._current or None
         if self._current is None:
             self._current = self.repo.get_current_price(self.symbol)
             if not self._current:
@@ -91,7 +132,17 @@ class StockService:
         period = period or self.fin_period
         key = f"{period}:{years or self.fin_years}"
         if key not in self._fin:
-            self._fin[key] = self.repo.get_financials(self.symbol, period=period, years=years or self.fin_years)
+            fin = self.repo.get_financials(self.symbol, period=period, years=years or self.fin_years)
+            if self.as_of is not None and isinstance(fin, dict):
+                fin = dict(fin)
+                data = fin.get("data")
+                if isinstance(data, pd.DataFrame) and not data.empty:
+                    keep = [self.fin_available(k, period) for k in data.index]
+                    fin["data"] = data[keep]
+                    src = fin.get("sources")
+                    if isinstance(src, pd.DataFrame) and not src.empty:
+                        fin["sources"] = src.loc[[i for i in fin["data"].index if i in src.index]]
+            self._fin[key] = fin
         return self._fin[key]
 
     def financial_summary(self, period: Optional[str] = None) -> Dict[str, Any]:
@@ -105,6 +156,11 @@ class StockService:
         return self._summary_cache[period]
 
     def get_peer_stats(self) -> Dict[str, Any]:
+        if self._peer_stats is None and self.as_of is not None and \
+                (pd.Timestamp(datetime.now().date()) - self.as_of).days > 30:
+            # Trung vị ngành chỉ có số liệu HIỆN TẠI → không dùng cho ngày định giá đã quá 30 ngày
+            self._peer_stats = {"group": None, "n": 0, "reason": "Định giá tại ngày quá khứ (> 30 ngày): không dùng "
+                                "trung vị ngành hiện tại để tránh dùng thông tin tương lai."}
         if self._peer_stats is None:
             try:
                 self._peer_stats = compute_peer_stats(self.symbol, self.repo.get_financial_ratios)
@@ -220,22 +276,177 @@ class StockService:
     # ─────────────────── Full Report Data ────────────────────────────────────
 
     def _safe(self, name: str, fn, default):
-        """Chạy một phần phân tích; lỗi ở phần này không làm hỏng các phần khác."""
+        """Chạy một phần phân tích; lỗi ở phần này không làm hỏng các phần khác. Kết quả được ghi nhớ
+        trong lượt phân tích (tránh tính lại kỹ thuật/cơ bản/định giá 2 lần khi chấm điểm tổng hợp)."""
+        memo = self.__dict__.setdefault("_memo", {})
+        if name in memo:
+            return memo[name]
         try:
-            return fn()
+            memo[name] = fn()
+            return memo[name]
         except Exception as exc:
             import traceback
             logger.exception("%s failed for %s", name, self.symbol)
             self._errors[name] = f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}"
             return default
 
+    # ─────────────────── Định giá nhiều phương pháp & khuyến nghị ─────────────
+
+    def get_long_price_df(self, years: int = 6) -> pd.DataFrame:
+        """Lịch sử giá dài (để tính P/E, P/B cuối năm trong quá khứ)."""
+        try:
+            return self._history(self.symbol, 365 * years + 30)
+        except Exception as exc:
+            logger.debug("long price history failed for %s: %s", self.symbol, exc)
+            return pd.DataFrame()
+
+    def fair_value_analysis(self) -> Dict[str, Any]:
+        from analytics.fair_value import fair_value, historical_multiples, is_financial
+        price = self._price_vnd()
+        summ = self.financial_summary()
+        val = summ.get("valuation") or {}
+        ratios = summ.get("ratios")
+        last = ratios.iloc[-1] if ratios is not None and not ratios.empty else pd.Series(dtype=float)
+        annual = self.get_financials("year").get("data", pd.DataFrame())
+        hist = historical_multiples(annual, val.get("shares"), self.get_long_price_df())
+        peers = self.get_peer_stats() or {}
+        info = self.get_company_info() or {}
+        industry = str(info.get("industry") or info.get("sector") or "")
+        res = fair_value(price, val.get("eps_ttm"), val.get("bvps"),
+                         roe_pct=last.get("roe"), payout_pct=last.get("dividend_payout"),
+                         dividend_yield_pct=val.get("dividend_yield"), beta=self.compute_beta(),
+                         peer_pe=peers.get("pe"), peer_pb=peers.get("pb"),
+                         peer_n=int(peers.get("n_pe", peers.get("n", 0)) or 0), peer_group=peers.get("group"),
+                         hist=hist, financial=is_financial(industry, bool(summ.get("is_bank"))))
+        res["history"] = hist
+        res["eps_ttm"], res["bvps"] = val.get("eps_ttm"), val.get("bvps")
+        res["pe_now"], res["pb_now"] = val.get("pe"), val.get("pb")
+        return res
+
+    def recommendation(self) -> Dict[str, Any]:
+        from analytics.recommendation import recommend
+        fv = self._safe("fair_value", self.fair_value_analysis, {"available": False})
+        opp = self._safe("opportunity_score", self.compute_opportunity_score, {"composite": {}})
+        tech = self._safe("technical", self.technical_analysis, {"available": False})
+        trend = ((tech.get("signals") or {}).get("trend") or {}).get("name") if tech.get("available") else None
+        return recommend(fv, (opp.get("composite") or {}).get("score"), trend)
+
+    # ─────────────────── Khuyến nghị đầu tư & giá mục tiêu 12 tháng ─────────────
+
+    def investment_analysis(self, overrides: Optional[Dict[str, Any]] = None, holder: Optional[bool] = None,
+                            as_of: Optional[pd.Timestamp] = None) -> Dict[str, Any]:
+        """
+        Financial Health Score → Risk Assessment → Valuation Engine (12T) → Recommendation Engine.
+        Dùng lại: BCTC đã chuẩn hóa (get_financials), bộ tính chỉ số (financial_ratios), beta, trung vị ngành,
+        lịch sử giá dài. Không tự tạo dữ liệu: thiếu nguồn → trạng thái "CHƯA ĐỦ CƠ SỞ".
+        """
+        from analytics.financial_health import FinancialHealthEngine
+        from analytics.recommendation import explain_recommendation, recommend_investment
+        from analytics.risk_assessment import assess_risk
+        from analytics.valuation_engine import ValuationEngine12M
+        from config.investment_model import classify_company, load_config
+
+        if as_of is not None and (self.as_of is None or pd.Timestamp(as_of).normalize() != self.as_of):
+            return StockService(self.symbol, days=self.days, fin_years=self.fin_years, repository=self.repo,
+                                as_of=as_of).investment_analysis(overrides, holder)
+        as_of = self.as_of
+        cfg = load_config(overrides)
+        annual = self.get_financials("year").get("data", pd.DataFrame())
+        if annual is not None and not annual.empty:
+            annual = annual[[int(k) % 10 == 0 for k in annual.index]]
+        summ = self.financial_summary("year") if annual is not None and not annual.empty else {}
+        ratios = summ.get("ratios") if summ else None
+        price_df = self.get_long_price_df()          # đã cắt về ngày định giá nếu có as_of
+        info = self.get_company_info() or {}
+        peers = self.get_peer_stats() or {}
+        industry = " ".join(str(info.get(k) or "") for k in ("industry", "sector", "icb_name3", "icb_name2"))
+        company = classify_company(industry, str(peers.get("group") or ""), bool(summ.get("is_bank")) if summ else False)
+        cur = self.get_current_price() or {}
+        price, price_date = cur.get("price"), cur.get("timestamp")
+        shares = None
+        if annual is not None and not annual.empty:
+            sh = fr.shares_series(annual).dropna()
+            shares = float(sh.iloc[-1]) if not sh.empty else None
+        tech = self._safe("technical", self.technical_analysis, {"available": False})
+        trend = ((tech.get("signals") or {}).get("trend") or {}).get("name") if tech.get("available") else None
+        ind_text = f"{industry} {peers.get('group') or ''}"
+
+        health = FinancialHealthEngine(cfg).score(ratios, annual, company)
+        risk_kw = dict(summary=summ, price_df=price_df, health=health, industry_text=ind_text, trend=trend,
+                       as_of=pd.Timestamp(as_of) if as_of is not None else None, config=cfg)
+        risk0 = assess_risk(annual, ratios, company, **risk_kw)
+        valuation = ValuationEngine12M(cfg).value(
+            price=price, price_date=pd.Timestamp(price_date) if price_date is not None else None, wide=annual,
+            ratios=ratios, shares=shares, company=company, beta=self.compute_beta(), peers=peers,
+            price_df=price_df, risk_level=risk0["level"])
+        if as_of is not None:
+            valuation["as_of"] = str(as_of.date())
+            valuation.setdefault("notes", []).insert(0, f"Định giá tại ngày {as_of:%d/%m/%Y}: dùng giá đóng cửa phiên "
+                                                        f"{price_date or '—'} và chỉ BCTC đã công bố trước ngày này."
+                                                        + (" Không dùng trung vị ngành (chỉ có số liệu hiện tại)."
+                                                           if not peers.get("n") and peers.get("reason", "").startswith("Định giá") else ""))
+        risk = assess_risk(annual, ratios, company, valuation=valuation, **risk_kw)
+        rec = recommend_investment(health, valuation, risk, cfg, holder=holder)
+        return {"symbol": self.symbol, "name": info.get("company_name") or info.get("short_name") or "",
+                "industry": industry.strip(), "company": company, "health": health, "valuation": valuation, "risk": risk,
+                "recommendation": rec, "explanation": explain_recommendation(self.symbol, rec, health, valuation, risk),
+                "thesis": _thesis(health, valuation, risk), "config": cfg, "peers": peers,
+                "as_of": str(as_of.date()) if as_of is not None else None,
+                "generated_at": datetime.now().isoformat(timespec="seconds")}
+
+    def recommendation_backtest(self, years: int = 8, cost: float = 0.003,
+                                overrides: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Backtest hệ thống khuyến nghị 12T theo từng năm (điểm thời gian) so với VN-Index."""
+        from analytics.reco_backtest import backtest_recommendations
+        from config.investment_model import classify_company, load_config
+        annual = self.get_financials("year", years=max(self.fin_years, years + 3)).get("data", pd.DataFrame())
+        px = self.get_long_price_df(years=years + 1)
+        try:
+            idx = self.repo.get_index_history("VNINDEX", days=365 * (years + 1) + 30)
+        except Exception:
+            idx = pd.DataFrame()
+        info = self.get_company_info() or {}
+        peers = self.get_peer_stats() or {}
+        industry = " ".join(str(info.get(k) or "") for k in ("industry", "sector", "icb_name3", "icb_name2"))
+        company = classify_company(industry, str(peers.get("group") or ""), bool(fr.is_bank(annual)) if annual is not None and not annual.empty else False)
+        return backtest_recommendations(annual, px, idx, company, cost=cost, config=load_config(overrides),
+                                        summary_fn=lambda w: {"altman": fr.altman_z(w)})
+
+    def investment_compat(self) -> Dict[str, Any]:
+        """Kết quả 12T ở dạng khóa cũ của 'fair_value' (để trang phân tích & PDF hiện tại dùng tiếp)."""
+        inv = self._safe("investment", self.investment_analysis, None)
+        if not inv:
+            return {"available": False, "notes": ["Không chạy được mô hình định giá 12 tháng."]}
+        return valuation_to_legacy(inv["valuation"])
+
+    def _recommendation_compat(self) -> Dict[str, Any]:
+        inv = self._safe("investment", self.investment_analysis, None)
+        if not inv:
+            return self.recommendation()          # dự phòng: hệ thống cũ
+        rec = dict(inv["recommendation"])
+        rec["rating"] = rec["label"]
+        return rec
+
+    def company_profile(self) -> Dict[str, Any]:
+        out: Dict[str, Any] = {}
+        for key, fn in (("shareholders", self.repo.get_shareholders), ("officers", self.repo.get_officers),
+                        ("events", self.repo.get_company_events)):
+            try:
+                df = fn(self.symbol)
+                out[key] = df if isinstance(df, pd.DataFrame) else pd.DataFrame()
+            except Exception:
+                out[key] = pd.DataFrame()
+        return out
+
     def full_analysis(self) -> Dict[str, Any]:
         self._errors: Dict[str, str] = {}
+        self._memo = {}
         na = lambda reason="Lỗi khi xử lý dữ liệu": {"available": False, "reason": reason}  # noqa: E731
         fin = self._safe("financials", self.get_financials, {})
         return {
             "symbol": self.symbol,
             "timestamp": datetime.now().isoformat(),
+            "as_of": str(self.as_of.date()) if self.as_of is not None else None,
             "company_info": self._safe("company_info", self.get_company_info, {}) or {},
             "current_price": self._safe("current_price", self.get_current_price, None),
             "technical": self._safe("technical", self.technical_analysis, na()),
@@ -249,5 +460,44 @@ class StockService:
                            "period": fin.get("period"), "attempts": fin.get("attempts", [])},
             "financial_summary": self._safe("financial_summary", self.financial_summary, {}),
             "index_history": self._safe("index_history", self.get_index_df, None),
+            "investment": self._safe("investment", self.investment_analysis, None),
+            "fair_value": self._safe("fair_value_12m", self.investment_compat, {"available": False}),
+            "recommendation": self._safe("recommendation_12m", self._recommendation_compat, {}),
+            "company_profile": self._safe("company_profile", self.company_profile, {}),
             "errors": dict(self._errors),
         }
+
+
+def valuation_to_legacy(v: Dict[str, Any]) -> Dict[str, Any]:
+    """Ánh xạ kết quả ValuationEngine12M sang cấu trúc 'fair_value' cũ (thêm khóa mới, không bỏ khóa cũ)."""
+    out = dict(v)
+    out["available"] = bool(v.get("available"))
+    out["fair_value"] = v.get("target_12m")
+    for m in out.get("methods", []):
+        m.setdefault("group", m.get("key"))
+    hist = dict(v.get("history") or {})
+    for k in ("pe", "pb"):
+        vals = list((hist.get(k) or {}).values())
+        hist[f"{k}_median"] = float(pd.Series(vals).median()) if len(vals) >= 3 else None
+    out["history"] = hist
+    out["model"] = "12m"
+    return out
+
+
+def _thesis(health: Dict[str, Any], valuation: Dict[str, Any], risk: Dict[str, Any]) -> Dict[str, list]:
+    """Luận điểm đầu tư rút ra từ điểm số thật (điểm mạnh ≥ 75, điểm yếu < 40)."""
+    pos, neg = [], []
+    for g in health.get("groups", []):
+        for m in g.get("metrics", []):
+            if m.get("score") is None:
+                continue
+            txt = f"{m['label']}: {m['display']}"
+            if m["score"] >= 75:
+                pos.append(txt)
+            elif m["score"] < 40:
+                neg.append(txt)
+    if valuation.get("upside") is not None:
+        (pos if valuation["upside"] > 0 else neg).append(
+            f"Giá mục tiêu 12T {valuation['target_12m']:,.0f} ({valuation['upside']:+.1f}% so với thị giá)")
+    neg += [i["text"] for i in risk.get("items", []) if i["severity"] in ("Nghiêm trọng", "Cao")][:3]
+    return {"positives": pos[:6], "negatives": neg[:6]}
