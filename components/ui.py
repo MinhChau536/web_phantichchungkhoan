@@ -87,3 +87,20 @@ def unique_columns(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
     out.columns = cols
     return out
+
+
+def as_of_picker(key: str, help_text: str = "") -> "str | None":
+    """Chọn thời điểm định giá: giá hiện tại (None) hoặc giá đóng cửa tại một ngày → 'YYYY-MM-DD'."""
+    import datetime as _dt
+    mode = st.radio("Giá dùng để định giá", ["Giá hiện tại", "Giá tại ngày"], horizontal=True, key=f"{key}_mode",
+                    help=help_text or "Giá tại ngày: lấy giá đóng cửa phiên gần nhất ≤ ngày chọn và chỉ dùng BCTC đã công bố "
+                                      "trước ngày đó (BCTC năm tính từ 1/4 năm sau, BCTC quý 45 ngày sau khi hết quý). "
+                                      "Dùng để chốt số liệu cho bài nộp/thuyết trình.")
+    if mode == "Giá hiện tại":
+        return None
+    today = _dt.date.today()
+    d = st.date_input("Ngày định giá", value=today - _dt.timedelta(days=1), min_value=today - _dt.timedelta(days=365 * 6),
+                      max_value=today - _dt.timedelta(days=1), format="DD/MM/YYYY", key=f"{key}_date")
+    if (today - d).days > 30:
+        st.caption("ℹ️ Ngày cũ hơn 30 ngày: không dùng trung vị ngành (chỉ có số liệu hiện tại) để tránh dùng thông tin tương lai.")
+    return d.isoformat()

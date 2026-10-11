@@ -44,12 +44,13 @@ def _get_theme_colors() -> dict:
         }
     return {
         "template": "plotly_white",
-        "bg": "#ffffff",
-        "card": "#ffffff",
-        "grid": "#f1f5f9",
-        "text": "#0f172a",
-        "axis": "#64748b",
-        "legend_bg": "rgba(255,255,255,0.9)",
+        "bg": "rgba(0,0,0,0)",            # trong suốt: thấy nền động phía sau
+        "card": "rgba(0,0,0,0)",
+        "grid": "rgba(15,23,42,0.10)",
+        "text": "#0b1220",
+        "axis": "#334155",
+        "legend_bg": "rgba(0,0,0,0)",
+        "hover_bg": "#ffffff",
     }
 
 
@@ -64,7 +65,7 @@ def _base_layout(**kwargs) -> dict:
         "xaxis": {"gridcolor": colors["grid"], "zerolinecolor": colors["grid"], "tickfont": {"color": colors["axis"]}},
         "yaxis": {"gridcolor": colors["grid"], "zerolinecolor": colors["grid"], "tickfont": {"color": colors["axis"]}},
         "legend": {"bgcolor": colors["legend_bg"], "bordercolor": colors["grid"], "borderwidth": 1},
-        "hoverlabel": {"bgcolor": colors["card"], "bordercolor": colors["grid"], "font_color": colors["text"]},
+        "hoverlabel": {"bgcolor": colors.get("hover_bg", colors["card"]), "bordercolor": colors["grid"], "font_color": colors["text"]},
     }
     layout.update(kwargs)
     return layout
