@@ -73,10 +73,10 @@ def test_hybrid_price_uses_dnse_recent_and_history_older(fake_repo):
 
 
 def test_price_falls_back_when_dnse_or_vnstock_fails():
-    r = DataRepository(vnstock_client=FakeVnstock(), dnse_client=FakeDNSE(fail=True),
+    r = DataRepository(arminer_client=False, vnstock_client=FakeVnstock(), dnse_client=FakeDNSE(fail=True),
                        vietstock_client=FakeVietstock(), use_cache=False)
     assert set(r.get_price_history("FPT", days=100)["source"]) == {"vnstock_vci"}
-    r2 = DataRepository(vnstock_client=FakeVnstock(fail_price=True), dnse_client=FakeDNSE(fail=True),
+    r2 = DataRepository(arminer_client=False, vnstock_client=FakeVnstock(fail_price=True), dnse_client=FakeDNSE(fail=True),
                         vietstock_client=FakeVietstock(True), use_cache=False)
     assert set(r2.get_price_history("FPT", days=100)["source"]) == {"vietstock"}
 
@@ -94,7 +94,7 @@ def test_financials_merge_sources_and_track_provenance(fake_repo):
 
 
 def test_financials_fallback_to_kbs_when_vci_missing():
-    r = DataRepository(vnstock_client=FakeVnstock(fail_vci_fin=True), dnse_client=FakeDNSE(),
+    r = DataRepository(arminer_client=False, vnstock_client=FakeVnstock(fail_vci_fin=True), dnse_client=FakeDNSE(),
                        vietstock_client=FakeVietstock(), pdf_financial_loader=lambda s, p: pd.DataFrame(),
                        use_cache=False)
     fin = r.get_financials("FPT", "year")
@@ -186,7 +186,7 @@ def test_document_classification_and_pdf_as_last_source(tmp_path):
     wide = ds.pdf_financials("ABC", "year")
     assert wide.loc[20250, "revenue"] == 60_300e6
 
-    r = DataRepository(vnstock_client=FakeVnstock(fail_vci_fin=True), dnse_client=FakeDNSE(),
+    r = DataRepository(arminer_client=False, vnstock_client=FakeVnstock(fail_vci_fin=True), dnse_client=FakeDNSE(),
                        vietstock_client=FakeVietstock(), pdf_financial_loader=ds.pdf_financials, use_cache=False)
     fin = r.get_financials("ABC", "year")
     assert fin["sources"].loc[20250, "total_assets"] == "pdf"   # KBS không có CĐKT → lấy từ PDF
@@ -246,7 +246,8 @@ def test_excel_and_pdf_sections(fake_repo, tmp_path):
     from pypdf import PdfReader
     assert len(PdfReader(io.BytesIO(full)).pages) > len(PdfReader(io.BytesIO(part)).pages)
     text = "".join(p.extract_text() for p in PdfReader(io.BytesIO(part)).pages)
-    assert "Chỉ số tài chính" in text and "Báo cáo tài chính nhiều năm" not in text
+    up = text.upper()
+    assert "CHỈ SỐ TÀI CHÍNH" in up and "BÁO CÁO TÀI CHÍNH NHIỀU NĂM" not in up
 
 
 def test_database_is_thread_safe():
@@ -293,7 +294,7 @@ def test_vci_ratio_quarterly_columns_labelled_by_year_only():
     w = canonicalize(raw, "ratio")
     assert list(w.index) == [20220, 20230, 20240, 20250]
     assert w.loc[20250, "shares_outstanding"] == 1.2e9
-    r = DataRepository(vnstock_client=FakeVnstock(), dnse_client=FakeDNSE(), vietstock_client=FakeVietstock(),
+    r = DataRepository(arminer_client=False, vnstock_client=FakeVnstock(), dnse_client=FakeDNSE(), vietstock_client=FakeVietstock(),
                        pdf_financial_loader=lambda s, p: pd.DataFrame(), use_cache=False)
     r._vnstock.get_financial_statement = (lambda sym, st, period="year", source=None:
                                           raw if st == "ratio" else FakeVnstock().get_financial_statement(sym, st, period, source))
@@ -307,3 +308,176 @@ def test_degenerate_period_labels_are_ignored_and_displayable():
     assert canonicalize(raw, "ratio").empty                       # không gán nhầm vào năm 2018
     shown = unique_columns(raw)
     assert not shown.columns.duplicated().any() and shown.shape == raw.shape
+
+
+def test_pdf_cover_page(fake_repo, tmp_path):
+    from pypdf import PdfReader
+    from reports.cover import render_cover, short_company_name
+    from reports.pdf_generator import PDFReportGenerator
+    from services.stock_service import StockService
+    assert short_company_name("Công ty Cổ phần FPT", "FPT") == "CTCP FPT"
+    assert render_cover("VCB", "Ngân hàng TMCP Ngoại thương Việt Nam").startswith(b"\xff\xd8")   # JPEG
+    a = StockService("FPT", days=400, repository=fake_repo).full_analysis()
+    gen = PDFReportGenerator()
+    with_cover = gen.generate(a, "x", output_path=str(tmp_path / "c.pdf"), sections=["summary"])
+    no_cover = gen.generate(a, "x", output_path=str(tmp_path / "n.pdf"), sections=["summary"], cover=False)
+    pc, pn = PdfReader(io.BytesIO(with_cover)).pages, PdfReader(io.BytesIO(no_cover)).pages
+    assert len(pc) == len(pn) + 1
+    assert "STOCK ANALYTICS PRO" not in (pc[0].extract_text() or "")   # bìa là ảnh, không có đầu trang
+    assert "Trang 2/" in pc[1].extract_text()
+
+
+def test_cafef_cdn_link_fix(tmp_path):
+    from services.document_service import DocumentService, normalize_doc_url
+    bad = "https://cafefnew.mediacdn.vn/Images/Uploaded/DuLieuDownload/BCTC/X_2025.pdf"
+    good = "https://cafef1.mediacdn.vn/Images/Uploaded/DuLieuDownload/BCTC/X_2025.pdf"
+    assert normalize_doc_url(bad) == good
+    assert normalize_doc_url("https://acb.com.vn/bctn.pdf") == "https://acb.com.vn/bctn.pdf"
+
+    class R:
+        def __init__(self, code, body): self.status_code, self.content = code, body
+
+    class S:
+        calls = []
+        def get(self, url, timeout=60):
+            S.calls.append(url)
+            return R(200, b'{"serving_error_003": "File not found"}') if "cafefnew" in url else R(200, b"%PDF-1.4 ok")
+
+    ds = DocumentService.__new__(DocumentService)
+    ds.session = S()
+    ds._dir = lambda sym: tmp_path
+    class DB:
+        def upsert_document(self, d): self.d = d
+    ds.db = DB()
+    p = ds.download({"url": bad, "doc_id": "abc", "symbol": "ACB", "year": 2025, "doc_type": "fs_annual"})
+    assert p is not None and p.read_bytes().startswith(b"%PDF") and S.calls[0] == good
+
+
+def test_vietstock_static_annual_reports():
+    from services.document_service import VietstockStaticDocs, classify_document
+
+    class R:
+        def __init__(self, ok): self.status_code, self._ok = (200 if ok else 404), ok
+        def iter_content(self, n): yield (b"%PDF-1.7" if self._ok else b"<html>")
+        def close(self): pass
+
+    class S:
+        def get(self, url, timeout=8, stream=False):
+            return R("/HOSE/" in url and ("_2023.pdf" in url or "_2024.pdf" in url))
+
+    links = VietstockStaticDocs(S()).list("ACB", {"exchange": "VNINDEX"})
+    assert sorted(t for t, _ in links) == ["Báo cáo thường niên năm 2023", "Báo cáo thường niên năm 2024"]
+    meta = classify_document(*links[0])
+    assert meta["doc_type"] == "annual_report" and meta["year"] in (2023, 2024)
+
+
+def test_uploaded_doc_without_url_lists_and_renders(tmp_path):
+    """File tải lên không có link (url = NULL/NaN) không được làm hỏng danh sách tài liệu."""
+    from data.database import Database
+    from services.document_service import DocumentService
+    ds = DocumentService(db=Database(":memory:"), base_dir=tmp_path)
+    ds.save_upload("ACB", "ACB_BCTN_2024.pdf", b"%PDF-1.4 test", doc_type="annual_report", year=2024)
+    ds.db.upsert_document({"doc_id": "x1", "symbol": "ACB", "year": 2025, "doc_type": "fs_annual",
+                           "title": "BCTC 2025", "source": "cafef",
+                           "url": "https://cafefnew.mediacdn.vn/Images/Uploaded/DuLieuDownload/BCTC/a.pdf"})
+    df = ds.list_documents("ACB")
+    assert len(df) == 2
+    up = df[df["source"] == "upload"].iloc[0]
+    assert up["url"] is None and up["downloaded"]
+    assert df[df["source"] == "cafef"].iloc[0]["url"].startswith("https://cafef1.mediacdn.vn/")
+
+
+def test_offline_arminer_source_fills_history():
+    """Nguồn BCTC đóng gói sẵn: số liệu FPT 2025 khớp BCTC thật, có lịch sử từ 2009, ngân hàng nhận đúng chỉ tiêu."""
+    from data.financial_mapping import canonicalize
+    from data.providers.arminer_client import ArminerClient
+    c = ArminerClient()
+    assert c.available()
+    is_fpt = canonicalize(c.get_financial_statement("FPT", "income_statement"), "is", unit_factor=1.0)
+    assert is_fpt.loc[20250, "revenue"] == pytest.approx(70_112.8e9, rel=1e-3)
+    assert is_fpt.loc[20250, "gross_profit"] == pytest.approx(25_888.5e9, rel=1e-3)
+    assert is_fpt.index.min() <= 20110          # lịch sử từ 2011
+    bank = canonicalize(c.get_financial_statement("ACB", "balance_sheet"), "bs", unit_factor=1.0)
+    assert {"customer_loans", "customer_deposits", "total_assets"} <= set(bank.columns)
+    assert c.get_financial_statement("FPT", "income_statement", period="quarter").empty
+
+
+def test_repository_uses_offline_source_when_online_missing():
+    from data.data_repository import DataRepository
+    from tests.fakes import FakeDNSE, FakeVietstock, FakeVnstock
+
+    class NoFin(FakeVnstock):
+        def get_financial_statement(self, *a, **k):
+            return pd.DataFrame()
+    r = DataRepository(vnstock_client=NoFin(), dnse_client=FakeDNSE(), vietstock_client=FakeVietstock(False),
+                       pdf_financial_loader=lambda s, p: pd.DataFrame(), use_cache=False)
+    res = r.get_financials("HPG", "year", years=20)
+    assert not res["data"].empty and "arminer" in set(res["sources"].stack().unique())
+
+
+def test_zenodo_remote_zip_extraction(tmp_path):
+    """Rút đúng 1 file PDF trong ZIP từ xa qua HTTP Range (máy chủ giả lập có hỗ trợ Range)."""
+    import http.server
+    import threading
+    import zipfile as zf_mod
+    from services import zenodo_source as zs
+
+    zpath = tmp_path / "vn_bctn_2021_2025.zip"
+    with zf_mod.ZipFile(zpath, "w") as z:
+        z.writestr("full_data/ACB/ACB_24CN_BCTN.pdf", b"%PDF-1.7 ACB 2024" + b"x" * 300_000)
+        z.writestr("full_data/FPT/FPT_24CN_BCTN.pdf", b"%PDF-1.7 FPT 2024")
+    data = zpath.read_bytes()
+    hits = []
+
+    class H(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            rng = self.headers.get("Range", "")
+            a, b = rng.replace("bytes=", "").split("-")
+            a, b = int(a), min(int(b), len(data) - 1)
+            hits.append((a, b))
+            self.send_response(206)
+            self.send_header("Content-Range", f"bytes {a}-{b}/{len(data)}")
+            self.send_header("Content-Length", str(b - a + 1))
+            self.end_headers()
+            self.wfile.write(data[a:b + 1])
+
+        def log_message(self, *a):
+            pass
+
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        base = f"http://127.0.0.1:{srv.server_address[1]}/files"
+        pdf = zs.fetch_pdf("2021_2025", "FPT/FPT_24CN_BCTN.pdf", base_url=base)
+        assert pdf == b"%PDF-1.7 FPT 2024"
+        assert sum(b - a + 1 for a, b in hits) < len(data) * 3      # không tải lặp cả kho
+    finally:
+        srv.shutdown()
+    reports = zs.list_reports("ACB")
+    assert reports and reports[0]["year"] >= 2020 and reports[0]["relative_path"].startswith("ACB/")
+    assert zs.parse_url(zs.make_url("2021_2025", "ACB/x.pdf")) == ("2021_2025", "ACB/x.pdf")
+
+
+def test_vci_profit_loss_labels_not_excluded_as_ratio():
+    """Nhãn 'Lãi/Lỗ…', 'LN trước thuế', 'Lợi nhuận thuần' (VCI) phải được nhận – dấu '/' không phải tỷ số."""
+    from data.financial_mapping import canonicalize
+    rows = [("Doanh thu thuần", "Net Revenue", 100), ("Lãi/Lỗ từ hoạt động kinh doanh", "Operating Profit/Loss", 20),
+            ("LN trước thuế", "Profit before tax", 19), ("Lợi nhuận thuần", "Net Profit For the Year", 15),
+            ("Cổ đông của Công ty mẹ", "Attributable to parent company", 13), ("Tăng trưởng lợi nhuận (%)", "Profit growth", 9)]
+    df = pd.DataFrame([{"item": a, "item_en": b, "item_id": "", "2025": v * 1e9} for a, b, v in rows])
+    out = canonicalize(df, "is")
+    r = out.loc[20250] if 20250 in out.index else out[20250]
+    assert r["operating_profit"] == 20e9 and r["profit_before_tax"] == 19e9
+    assert r["net_income"] == 15e9 and r["net_income_parent"] == 13e9
+
+
+def test_profit_loss_slash_labels_and_tax_not_confused_with_pbt():
+    """'Lợi nhuận/(lỗ) …' (mẫu VAS) và BCTC CTCK: thuế TNDN không được nhận nhầm dòng LN trước thuế."""
+    from data.financial_mapping import canonicalize
+    rows = [("Doanh thu thuần về bán hàng và cung cấp dịch vụ", 100), ("Lợi nhuận/(lỗ) thuần từ hoạt động kinh doanh", 20),
+            ("Tổng lợi nhuận kế toán trước thuế thu nhập doanh nghiệp", 19), ("Chi phí thuế thu nhập doanh nghiệp", 4),
+            ("Lợi nhuận/(lỗ) sau thuế thu nhập doanh nghiệp", 15), ("Lợi nhuận sau thuế phân bổ cho chủ sở hữu", 13)]
+    df = pd.DataFrame([{"item": a, "item_en": "", "item_id": "", "2025": v * 1e9} for a, v in rows])
+    r = canonicalize(df, "is").loc[20250]
+    assert (r["operating_profit"], r["profit_before_tax"], r["income_tax"], r["net_income"], r["net_income_parent"]) == \
+        (20e9, 19e9, 4e9, 15e9, 13e9)
