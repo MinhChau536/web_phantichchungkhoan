@@ -1,0 +1,4 @@
+# Tùy chọn: đọc BCTC dạng PDF scan (không có lớp chữ) bằng OCR – chạy hoàn toàn trên máy.
+# Cài:  .venv\Scripts\python.exe -m pip install -r requirements-ocr.txt
+rapidocr_onnxruntime>=1.2.3
+pypdfium2>=4.0
