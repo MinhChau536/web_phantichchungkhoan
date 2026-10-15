@@ -1,0 +1,193 @@
+{
+ "_source": "Vietcap IQ API statistics-financial (marketCap, numberOfSharesMktCap; quý 4 = cuối năm)",
+ "_fetched": "2026-10-13",
+ "_note": "Vốn hóa THẬT tại cuối quý. Dùng để dựng giá cùng cơ sở số CP của BCTC năm (giá = vốn hóa / số CP năm gần nhất) cho đối chiếu giá mục tiêu trước/sau bước 7. VCB, VHM, SSI không truy cập được.",
+ "data": {
+  "FPT": [
+   {
+    "year": 2018,
+    "q": 4,
+    "market_cap": 30553600081800.0,
+    "shares": 616621596
+   },
+   {
+    "year": 2019,
+    "q": 4,
+    "market_cap": 34560572771400.0,
+    "shares": 681668102
+   },
+   {
+    "year": 2020,
+    "q": 4,
+    "market_cap": 65496534874000.0,
+    "shares": 789114878
+   },
+   {
+    "year": 2021,
+    "q": 4,
+    "market_cap": 104368439635000.0,
+    "shares": 907551649
+   },
+   {
+    "year": 2022,
+    "q": 4,
+    "market_cap": 87323315131200.0,
+    "shares": 1097026572
+   },
+   {
+    "year": 2023,
+    "q": 4,
+    "market_cap": 146681405062500.0,
+    "shares": 1269968875
+   },
+   {
+    "year": 2024,
+    "q": 4,
+    "market_cap": 170644025228000.0,
+    "shares": 1471069183
+   },
+   {
+    "year": 2025,
+    "q": 4,
+    "market_cap": 127933384787100.0,
+    "shares": 1703507121
+   },
+   {
+    "year": 2026,
+    "q": 1,
+    "market_cap": 120517147466600.0,
+    "shares": 1714326422
+   },
+   {
+    "year": 2026,
+    "q": 2,
+    "market_cap": 107675048700800.0,
+    "shares": 1885727648
+   }
+  ],
+  "HPG": [
+   {
+    "year": 2018,
+    "q": 4,
+    "market_cap": 70301327194600.0,
+    "shares": 2123907166
+   },
+   {
+    "year": 2019,
+    "q": 4,
+    "market_cap": 61019737941500.0,
+    "shares": 2761074115
+   },
+   {
+    "year": 2020,
+    "q": 4,
+    "market_cap": 182561874510900.0,
+    "shares": 3313282659
+   },
+   {
+    "year": 2021,
+    "q": 4,
+    "market_cap": 193677553169800.0,
+    "shares": 4472922706
+   },
+   {
+    "year": 2022,
+    "q": 4,
+    "market_cap": 120075324705000.0,
+    "shares": 5814785700
+   },
+   {
+    "year": 2023,
+    "q": 4,
+    "market_cap": 174152831715000.0,
+    "shares": 5814785700
+   },
+   {
+    "year": 2024,
+    "q": 4,
+    "market_cap": 165343067670000.0,
+    "shares": 6396250200
+   },
+   {
+    "year": 2025,
+    "q": 4,
+    "market_cap": 215296817232750.0,
+    "shares": 7675465855
+   },
+   {
+    "year": 2026,
+    "q": 1,
+    "market_cap": 189966701700000.0,
+    "shares": 8442964520
+   },
+   {
+    "year": 2026,
+    "q": 2,
+    "market_cap": 174769365564000.0,
+    "shares": 8442964520
+   }
+  ],
+  "MWG": [
+   {
+    "year": 2018,
+    "q": 4,
+    "market_cap": 37605519911400.0,
+    "shares": 442938986
+   },
+   {
+    "year": 2019,
+    "q": 4,
+    "market_cap": 36632929763400.0,
+    "shares": 452817426
+   },
+   {
+    "year": 2020,
+    "q": 4,
+    "market_cap": 66988255657300.0,
+    "shares": 475431197
+   },
+   {
+    "year": 2021,
+    "q": 4,
+    "market_cap": 109218050178000.0,
+    "shares": 732024465
+   },
+   {
+    "year": 2022,
+    "q": 4,
+    "market_cap": 58535068640000.0,
+    "shares": 1463376716
+   },
+   {
+    "year": 2023,
+    "q": 4,
+    "market_cap": 76036697204000.0,
+    "shares": 1462244177
+   },
+   {
+    "year": 2024,
+    "q": 4,
+    "market_cap": 83450748333900.0,
+    "shares": 1461484209
+   },
+   {
+    "year": 2025,
+    "q": 4,
+    "market_cap": 117473882320000.0,
+    "shares": 1468423529
+   },
+   {
+    "year": 2026,
+    "q": 1,
+    "market_cap": 113338801612800.0,
+    "shares": 1475765646
+   },
+   {
+    "year": 2026,
+    "q": 2,
+    "market_cap": 111562472901600.0,
+    "shares": 1475694086
+   }
+  ]
+ }
+}

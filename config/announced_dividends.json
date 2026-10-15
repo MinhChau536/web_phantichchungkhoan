@@ -1,0 +1,9 @@
+{
+  "_ghi_chu": "Cổ tức TIỀN MẶT đã công bố, nhập tay khi nguồn tự động (vnstock) không có. Mỗi đợt: ngày GDKHQ (ex_date), số đồng/CP (dps) và NGUỒN kiểm chứng được. App ưu tiên số liệu ở đây; chỉ các đợt có ex_date ≤ ngày định giá mới được dùng (không dùng thông tin tương lai). Không nhập số ước đoán.",
+  "FPT": [
+    {"ex_date": "2025-12-01", "dps": 1000, "note": "Tạm ứng đợt 1 cổ tức 2025 bằng tiền 10%; chốt danh sách 02/12/2025, thanh toán 12/12/2025 (GDKHQ = 1 ngày làm việc trước ngày chốt)",
+     "source": "https://mekongasean.vn/fpt-chot-ngay-tam-ung-co-tuc-tien-mat-48634.html"},
+    {"ex_date": "2026-05-28", "dps": 1000, "note": "Đợt còn lại cổ tức 2025 bằng tiền 10%; đăng ký cuối cùng 29/5/2026, thanh toán dự kiến 10/6/2026",
+     "source": "https://doanhnghiephoinhap.vn/co-dong-fpt-don-tin-vui-sap-nhan-1700-ty-dong-co-tuc-co-phieu-bat-tang-manh-kem-thanh-khoan-cao-nhat-3-thang-136611.html"}
+  ]
+}

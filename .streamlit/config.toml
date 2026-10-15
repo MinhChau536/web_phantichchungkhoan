@@ -1,0 +1,17 @@
+[client]
+showSidebarNavigation = false
+
+
+[server]
+headless = true
+enableCORS = false
+enableXsrfProtection = true
+maxUploadSize = 50
+
+[browser]
+gatherUsageStats = false
+
+[theme]
+# Cỡ chữ gốc của Streamlit (mặc định 16) – tăng 1px cho dễ đọc (14/10/2026). Các cỡ chữ cố định trong CSS của app
+# cũng đã tăng 1px (các giá trị 9–20px).
+baseFontSize = 17

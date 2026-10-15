@@ -1,0 +1,3 @@
+# Rổ KIỂM CHỨNG NGOÀI MẪU (15/10/2026) – chốt TRƯỚC khi chạy: các mã trong rổ ngành của app (data/ticker_directory.py)
+# KHÔNG thuộc VN30 (rổ đã dùng để hiệu chỉnh), lấy xen kẽ 1/2 theo thứ tự danh sách để giới hạn thời gian chạy.
+LPB,OCB,NAB,BAB,PGB,KLB,SGB,VCI,SHS,FTS,CTS,AGR,TVS,TCI,APS,IVS,APG,NVL,DIG,PDR,NLG,HDC,TCH,CRE,D2D,IDC,HQC,QCG,HSG,VGS,POM,SMC,HT1,KSB,VCS,FOX,CTR,SAM,ITD,SGT,DGW,KDC,DBC,MCH,VHC,IDI,PVD,BSR,REE,HDG,NT2,TV2,SBA,DCM,BFC,LAS,PHR,DRI,HAH,VOS,DVP,SGP,PHP,MSH,STK,GIL
