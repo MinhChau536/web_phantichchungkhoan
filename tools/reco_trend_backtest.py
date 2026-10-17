@@ -136,6 +136,18 @@ def make_trend_fn(px: pd.DataFrame):
 
 
 def run(symbols: List[str], start: str, step: int, out_path: str, base_repo=None, last_T=None) -> None:
+    # Backtest cần ĐỦ dữ liệu: hết lượt vnstock thì báo lỗi (SystemExit) để vòng lặp bên dưới chờ 65 giây rồi chạy lại mã,
+    # thay vì để app lặng lẽ bỏ qua lệnh gọi; chờ lượt trống tối đa 90 giây.
+    import core.nguon_du_lieu as _nd
+    old_flags = (_nd.RAISE_ON_RATE_LIMIT, _nd.VN_MAX_WAIT)
+    _nd.RAISE_ON_RATE_LIMIT, _nd.VN_MAX_WAIT = True, 90.0
+    try:
+        _run(symbols, start, step, out_path, base_repo, last_T)
+    finally:
+        _nd.RAISE_ON_RATE_LIMIT, _nd.VN_MAX_WAIT = old_flags
+
+
+def _run(symbols: List[str], start: str, step: int, out_path: str, base_repo=None, last_T=None) -> None:
     from core.du_lieu import DataRepository
     from core.pipeline import StockService
     repo = SlicedRepo(base_repo or DataRepository(), start="2017-01-01")
