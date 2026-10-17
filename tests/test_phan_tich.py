@@ -278,3 +278,22 @@ def test_event_summary():
     assert any("Cổ phiếu thưởng tỷ lệ 10.0%" in e for e in ev)
     assert any("ESOP" in e for e in ev)
     assert news_insight([], None)["tone"] == "Chưa có tin"
+
+
+def test_bank_specific_ratios_and_hidden_manufacturing_ratios():
+    import pandas as pd
+    from core.phan_tich_co_ban import compute_ratios, ratio_meta_for, BANK_HIDDEN_RATIOS
+    w = pd.DataFrame({
+        "total_operating_income": [40e12, 44e12], "net_interest_income": [30e12, 33e12],
+        "profit_before_tax": [20e12, 22e12], "provision_expense": [-4e12, -4.4e12],
+        "customer_loans": [500e12, 560e12], "customer_deposits": [450e12, 500e12],
+        "total_assets": [800e12, 880e12], "equity": [100e12, 115e12], "net_income": [16e12, 17.6e12],
+        "net_income_parent": [16e12, 17.6e12], "revenue": [40e12, 44e12],
+    }, index=[20240, 20250])
+    r = compute_ratios(w, "year").loc[20250]
+    assert r["nim"] == pytest.approx(33e12 / 840e12 * 100)
+    assert r["cir"] == pytest.approx((44e12 - 22e12 - 4.4e12) / 44e12 * 100)
+    assert r["credit_cost"] == pytest.approx(4.4e12 / 530e12 * 100)
+    meta = ratio_meta_for(True)
+    assert list(meta)[0] in {"loan_to_deposit", "equity_to_assets", "provision_to_income", "nim", "cir", "credit_cost", "nii_share"}
+    assert not (BANK_HIDDEN_RATIOS & set(meta))

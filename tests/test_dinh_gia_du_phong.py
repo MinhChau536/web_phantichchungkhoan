@@ -2647,3 +2647,53 @@ def test_mdd_one_year_window_in_risk_pillar():
     comp = (a.get("opportunity_score") or {}).get("risk_detail", {}).get("components", {}).get("drawdown")
     assert comp is not None
     assert comp["max_drawdown_pct"] == pytest.approx(exp, abs=0.1)
+
+
+def test_ttm_base_reports_actual_values_for_forecast_table():
+    """Kỳ gốc TTM (khóa quý) → bảng dự phóng PDF vẫn có cột TH (trước đây N/A vì tra trong BCTC năm theo khóa quý)."""
+    q = quarters()
+    r = run_test_financial_forecast(nonfin(), quarterly=q, as_of="2026-09-30")
+    act = r["base"]["actual"]
+    need = [20253, 20254, 20261, 20262]
+    assert r["base"]["kind"] == "TTM"
+    assert act["revenue"] == pytest.approx(q.loc[need, "revenue"].sum())
+    assert act["net_income_parent"] == pytest.approx(q.loc[need, "net_income_parent"].sum())
+    assert act["eps"] == pytest.approx(act["net_income_parent"] / SH)
+    assert act["roe"] == pytest.approx(act["net_income_parent"] / 20_000e9)
+
+
+def test_pdf_forecast_table_bank_shows_operating_income_and_actuals():
+    from core.bao_cao_pdf import PDFReportGenerator
+    w = bank()
+    w["net_interest_income"] = w["total_operating_income"] * 0.75
+    f = run_test_financial_forecast(w, company={"type": "bank"})
+    assert f["available"] and f["drivers"]["nii_share"]["value"] == pytest.approx(0.75)
+    captured = {}
+
+    class P:
+        def h3(self, *a, **k): pass
+        def para(self, *a, **k): pass
+    gen = PDFReportGenerator()
+    gen._period_table = lambda pdf, title, rows, cols, **k: captured.update(rows=rows, cols=cols)
+    gen._render_forecast_table(P(), {"inv": {"forecast": f}, "is_bank": True, "fv": {"assumptions": {"ke": 0.13}}})
+    rows = {r[0]: r[1] for r in captured["rows"]}
+    assert len(captured["cols"]) == 6                                   # TH + 5 năm dự phóng
+    for k in ("Tăng trưởng tín dụng", "Thu nhập lãi thuần (tỷ)", "NIM (xấp xỉ, trên tổng TS)", "Tổng thu nhập hoạt động (tỷ)",
+              "CIR", "Chi phí dự phòng (tỷ)", "LNST cổ đông mẹ (tỷ)", "ROE", "EPS (đ/cp)", "BVPS (đ/cp)",
+              "Thu nhập thặng dư (tỷ)"):
+        assert k in rows, k
+        assert all(v not in ("N/A", "—") for v in rows[k][1:]), (k, rows[k])
+    assert "Doanh thu (tỷ)" not in rows
+    nii = [float(v.replace(",", "")) for v in rows["Thu nhập lãi thuần (tỷ)"][1:]]
+    toi = [float(v.replace(",", "")) for v in rows["Tổng thu nhập hoạt động (tỷ)"][1:]]
+    assert all(0 < n_ < t_ for n_, t_ in zip(nii, toi))
+
+
+def test_report_returns_use_calendar_dates_not_series_start():
+    """Lợi suất 12T theo ngày lịch (trước đây = giá cuối ÷ giá ĐẦU chuỗi ~3 năm → TCB +118,8%)."""
+    from core.bao_cao_pdf import calendar_returns
+    ts = pd.bdate_range("2023-10-16", "2026-10-15")
+    px = pd.DataFrame({"timestamp": ts, "close": [10_000.0] * (len(ts) - 300) + [20_000.0] * 300})
+    r = calendar_returns(px)
+    assert r["1y"] == pytest.approx(0.0) and r["1m"] == pytest.approx(0.0)      # cả năm qua giá đứng yên → 0%, không phải +100%
+    assert calendar_returns(px.tail(100))["1y"] is None                           # chuỗi không phủ 12 tháng → không tính

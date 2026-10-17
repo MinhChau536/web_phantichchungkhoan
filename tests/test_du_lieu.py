@@ -808,3 +808,58 @@ def test_charter_capital_fallback_and_unknown_flag():
     assert s._apply_price_basis({"shares": 2.0e9})["shares"] == pytest.approx(5.0e9)
     s2 = StockService("MBB", repository=Repo(_series(), FPT_EV.iloc[[]]), as_of=T)
     assert s2._apply_price_basis({"shares": 2.0e9}).get("price_basis_unknown") is True
+
+
+def test_vnstock_systemexit_on_rate_limit_does_not_stop_app(monkeypatch):
+    """vnstock gọi sys.exit() khi hết 60 lượt/phút → phải thành None + tạm dừng gọi, không làm dừng trang."""
+    import core.nguon_du_lieu as nd
+    monkeypatch.setattr(nd, "_VN_BLOCKED_UNTIL", [0.0])
+    monkeypatch.setattr(nd, "VN_MAX_WAIT", 0.0)
+    c = nd.VnstockClient.__new__(nd.VnstockClient)
+    c._available, c._source, c._error_message = True, "vci", ""
+
+    def boom():
+        raise SystemExit(1)
+    assert c._try("history[vci]", boom) is None
+    assert nd.vnstock_rate_status()["blocked_until"] is not None
+    assert c._try("history[vci]", lambda: "ok") is None          # đang tạm dừng → không gọi tiếp
+    assert "hết lượt" in c._error_message
+
+
+def test_vnstock_call_budget_per_minute(monkeypatch):
+    import collections
+    import core.nguon_du_lieu as nd
+    monkeypatch.setattr(nd, "_VN_BLOCKED_UNTIL", [0.0])
+    monkeypatch.setattr(nd, "_VN_CALLS", collections.deque())
+    monkeypatch.setattr(nd, "VN_MAX_PER_MIN", 3)
+    monkeypatch.setattr(nd, "VN_MAX_WAIT", 0.0)
+    assert [nd._vn_slot() for _ in range(4)] == [True, True, True, False]
+
+
+def test_bank_other_business_income_not_mapped_as_operating_profit():
+    """BCTC ngân hàng: 'Lãi thuần từ hoạt động kinh doanh khác' KHÔNG phải LN thuần HĐKD (TCB bị ánh xạ 1.642 tỷ)."""
+    from core.du_lieu import ITEMS_BY_KEY, _find_row
+    mat = pd.DataFrame({"item": ["Thu nhập lãi thuần", "Lãi thuần từ hoạt động kinh doanh khác",
+                                 "Lãi/lỗ thuần từ mua bán chứng khoán kinh doanh", "Tổng lợi nhuận trước thuế"]})
+    assert _find_row(mat, ITEMS_BY_KEY["operating_profit"]) is None
+    mat2 = pd.DataFrame({"item": ["Doanh thu thuần", "Lợi nhuận thuần từ hoạt động kinh doanh", "Lợi nhuận trước thuế"]})
+    assert _find_row(mat2, ITEMS_BY_KEY["operating_profit"]) == 1                 # DN sản xuất vẫn ánh xạ đúng
+
+
+def test_share_events_listed_separately_with_status():
+    from core.tin_tuc import summarize_events
+    today = pd.Timestamp.now().normalize()
+    ev = pd.DataFrame({
+        "event_title_vi": ["Cổ phiếu thưởng tỉ lệ 60%", "Trả cổ tức bằng cổ phiếu tỉ lệ 50%", "Cổ phiếu thưởng tỉ lệ 10%"],
+        "event_code": ["ISS", "ISS", "ISS"],
+        "exercise_ratio": [0.6, 0.5, 0.1],
+        "exright_date": [today - pd.Timedelta(days=150), today - pd.Timedelta(days=30), today + pd.Timedelta(days=20)],
+        "listing_date": [today - pd.Timedelta(days=120), pd.NaT, pd.NaT],
+        "public_date": [today - pd.Timedelta(days=160)] * 3,
+    })
+    lines = [x for x in summarize_events(ev) if "tỷ lệ" in x and ("thưởng" in x.lower() or "cổ tức bằng" in x.lower())]
+    assert len(lines) == 3                                   # trước đây chỉ in 1 đợt
+    assert any("60.0%" in x and "đã thực hiện" in x for x in lines)
+    assert any("50.0%" in x and "CHƯA XÁC NHẬN" in x for x in lines)
+    assert any("10.0%" in x and "chưa đến ngày GDKHQ" in x for x in lines)
+    assert not any("giá đã được điều chỉnh tương ứng" in x for x in lines)

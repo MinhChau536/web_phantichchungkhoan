@@ -43,7 +43,8 @@ def _universe(n=20):
 GOOD_VAL = {"methods": [], "expected_return": 25.0, "confidence": "Trung bình", "assumptions": {"ke": 0.12}}
 
 
-def _run(q=80, v=80, g=80, px=None, annual=None, risk=None, quarterly=8, universe="default", valuation=None, index_df=None):
+def _run(q=80, v=80, g=80, px=None, annual=None, risk=None, quarterly=8, universe="default", valuation=None, index_df=None,
+         cfg=None):
     health = {"groups": [{"key": "profitability", "label": "Sinh lời", "score": q, "weight": 50},
                          {"key": "leverage", "label": "Cơ cấu vốn", "score": q, "weight": 50},
                          {"key": "growth", "label": "Tăng trưởng", "score": g, "weight": 20}]}
@@ -54,12 +55,24 @@ def _run(q=80, v=80, g=80, px=None, annual=None, risk=None, quarterly=8, univers
         price_df=_px(0.0025) if px is None else px, index_df=_px(0.001) if index_df is None else index_df,
         valuation=GOOD_VAL if valuation is None else valuation,
         multiples={"score": v}, peers={}, company={"type": "nonfinancial"}, risk=risk or {"items": []},
-        cfg=load_config(), ratios=None, universe=_universe() if universe == "default" else universe, symbol="AAA")
+        cfg=cfg or load_config(), ratios=None, universe=_universe() if universe == "default" else universe, symbol="AAA")
 
 
 def test_strong_and_stronger_than_market_is_buy():
     r = _run()
     assert r["label"] == "MUA" and r["F"] >= 70 and r["R"] >= 60 and r["relative"]["rank"][0] == 1
+
+
+def test_f_between_65_and_70_stronger_than_market_is_buy():
+    # 16/10/2026: ngưỡng "nền tảng mạnh" hạ 70 → 65 (VD: F 69, R 68 trước đây ra NẮM GIỮ)
+    r = _run(q=68, v=68, g=68)
+    assert 65 <= r["F"] < 70 and r["R"] >= 60 and r["label"] == "MUA"
+    assert r["thresholds"]["f_strong"] == 65
+
+
+def test_f_below_65_stronger_than_market_is_hold():
+    r = _run(q=60, v=60, g=60)
+    assert 55 <= r["F"] < 65 and r["R"] >= 60 and r["label"] == "NẮM GIỮ"
 
 
 def test_good_company_weaker_than_market_is_watch():
@@ -68,9 +81,23 @@ def test_good_company_weaker_than_market_is_watch():
     assert r["label"] == "THEO DÕI" and r["F"] >= 70 and r["R"] < 40 and "yếu hơn thị trường" in r["why"]
 
 
+def _cfg_leader(pct):
+    c = load_config()
+    c["multilayer"]["leader_top_pct"] = pct
+    return c
+
+
 def test_strong_but_market_below_ma200_caps_to_accumulate():
-    r = _run(index_df=_px(-0.002))
+    # không thuộc nhóm dẫn dắt (đặt top 0%) → thị trường dưới MA200 hạ MUA về TÍCH LŨY TỪNG PHẦN
+    r = _run(index_df=_px(-0.002), cfg=_cfg_leader(0.0))
     assert r["label"] == "TÍCH LŨY TỪNG PHẦN" and "MA200" in r["why"]
+
+
+def test_market_leader_still_buy_when_market_below_ma200():
+    # 16/10/2026: cổ phiếu dẫn dắt (top 30% sức mạnh giá trong rổ) vẫn MUA dù VN-Index dưới MA200
+    r = _run(index_df=_px(-0.002))
+    assert r["relative"]["rank"][0] == 1 and r["label"] == "MUA"
+    assert "nhóm dẫn dắt" in r["why"] and any("dưới MA200" in n for n in r["notes"])
 
 
 def test_expected_return_below_cost_of_equity_blocks_buy():
@@ -116,6 +143,20 @@ def test_percentile_rank_direction():
     assert percentile_rank(10, [5, 8, 12, 15, 20], higher_better=True) == pytest.approx(40.0)
     assert percentile_rank(10, [5, 8, 12, 15, 20], higher_better=False) == pytest.approx(60.0)
     assert percentile_rank(10, [5, 8], min_n=5) is None
+
+
+def test_quality_layer_does_not_double_count_fscore():
+    r = _run()
+    names = [row["name"] for row in r["layers"]["Q"]]
+    assert not any("F-score" in n for n in names)
+    assert sum(row["weight"] for row in r["layers"]["Q"]) == pytest.approx(100)
+
+
+def test_pros_and_cons_are_readable_sentences():
+    r = _run(q=90, v=30, g=90)
+    assert r["pros"] and all(x.endswith("/100)") for x in r["pros"] + r["cons"])
+    assert any(x.startswith("Cơ cấu vốn an toàn") or x.startswith("Đà tăng giá") for x in r["pros"])
+    assert any(x.startswith("Định giá đắt") for x in r["cons"])
 
 
 def test_timing_layer_redistributes_foreign_weight():
@@ -337,3 +378,19 @@ def test_multilayer_eval_runs(tmp_path):
     pd.DataFrame(rows).to_csv(p, index=False)
     r = ev.evaluate(str(p))
     assert r["co_nhan_da_lop"] == 96 and "MUA" in r["theo_nhan"] and r["rank_ic_theo_thang"]["so_thang"] > 0
+
+
+def test_valuation_pillar_uses_same_score_as_layer_v():
+    from core.du_lieu import DataRepository
+    from core.pipeline import StockService
+    from tests.fakes import FakeDNSE, FakeVietstock, FakeVnstock
+    repo = DataRepository(arminer_client=False, vnstock_client=FakeVnstock(), dnse_client=FakeDNSE(),
+                          vietstock_client=FakeVietstock(True), pdf_financial_loader=lambda s, p: pd.DataFrame(),
+                          use_cache=False)
+    s = StockService("FPT", days=1100, repository=repo)
+    ml = s.investment_analysis()["multilayer"]
+    va = s.valuation_analysis()["score"]
+    assert ml["V"] is not None and va["method"] == "multilayer_V" and va["score"] == round(ml["V"])
+    rv = va.get("relative_valuation") or {}
+    assert rv.get("pe") is not None and rv.get("pb") is not None   # bảng "So sánh với ngành" trong PDF cần P/E, P/B
+    assert getattr(repo, "_universe_px", None)          # rổ so sánh được nhớ lại cho lần phân tích sau
