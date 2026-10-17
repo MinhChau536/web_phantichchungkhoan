@@ -1303,12 +1303,10 @@ def section_header(title: str, subtitle: str = ""):
     title_color = "#0f172a" if is_light else "#e6edf3"
     sub_color = "#475569" if is_light else "#8b949e"
     accent = "#0284c7" if is_light else "#2979ff"
-    st.markdown(f"""
-    <div style="border-left:3px solid {accent};padding-left:12px;margin:16px 0 8px 0">
-        <span style="font-size:19px;font-weight:700;color:{title_color}">{title}</span>
-        {"<br><span style='font-size:13px;color:" + sub_color + "'>" + subtitle + "</span>" if subtitle else ""}
-    </div>
-    """, unsafe_allow_html=True)
+    sub = f"<br><span style='font-size:13px;color:{sub_color}'>{subtitle}</span>" if subtitle else ""
+    st.markdown(f'<div style="border-left:3px solid {accent};padding-left:12px;margin:16px 0 8px 0">'
+                f'<span style="font-size:19px;font-weight:700;color:{title_color}">{title}</span>{sub}</div>',
+                unsafe_allow_html=True)
 
 
 def render_score_breakdown(components: Dict[str, Any]):

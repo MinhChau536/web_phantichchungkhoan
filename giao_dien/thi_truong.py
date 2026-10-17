@@ -741,7 +741,7 @@ def _scenario_chart(v: Dict[str, Any], p) -> Optional[go.Figure]:
 
 
 def _render_ml(ml: Dict[str, Any], p) -> None:
-    """Khung khuyến nghị đa lớp: lý do, 4 lớp, ma trận F × T, bộ lọc loại trừ, khoảng định giá, ủng hộ/rủi ro, điều kiện sai."""
+    """Khung khuyến nghị đa lớp: lý do, các lớp điểm, ma trận F × R, bộ lọc loại trừ, khoảng định giá, ủng hộ/rủi ro, điều kiện sai."""
     from core.khuyen_nghi import MATRIX_ROWS
     _md(f'<div style="margin:10px 0 4px;padding:10px 14px;border-radius:10px;border-left:6px solid {ml["hex"]};'
         f'background:{ml["hex"]}1f"><b style="color:{p["text"]} !important">Khuyến nghị: {_e(ml["label"])}</b>'
@@ -781,7 +781,7 @@ def _render_ml(ml: Dict[str, Any], p) -> None:
         relx = ml.get("relative") or {}
         bits = []
         if relx.get("rank") and not relx.get("fallback"):
-            bits.append(f"Xếp hạng **{relx['rank'][0]}/{relx['rank'][1]}** trong rổ {relx.get('universe')}")
+            bits.append(f"Xếp hạng sức mạnh giá **{relx['rank'][0]}/{relx['rank'][1]}** trong rổ {relx.get('universe')}")
         mk = relx.get("market") or {}
         if mk:
             bits.append(f"VN-Index {mk['close']:,.0f} {'**dưới**' if mk['below'] else 'trên'} MA200 ({mk['ma200']:,.0f})")
@@ -790,7 +790,8 @@ def _render_ml(ml: Dict[str, Any], p) -> None:
             bits.append(f"LN kỳ vọng {hd['er']:+.1f}% {'≥' if hd['pass'] else '<'} Ke {hd['ke']:.1f}%")
         if bits:
             st.markdown(" · ".join(bits))
-        st.caption("MUA cần đủ: F ≥ 70, R ≥ 60, VN-Index trên MA200 và lợi nhuận kỳ vọng ≥ chi phí vốn Ke.")
+        _th = ml.get("thresholds") or {}
+        st.caption(f"MUA cần đủ: F ≥ {_th.get('f_strong', 65):g}, R ≥ {_th.get('r_strong', 60):g}, VN-Index trên MA200 (hoặc mã thuộc top 30% sức mạnh giá trong rổ) và lợi nhuận kỳ vọng ≥ chi phí vốn Ke.")
         vr = ml.get("valuation_range") or {}
         if vr.get("available"):
             st.markdown(f"**Khoảng định giá** ({_e(vr['source'])}): {_n(vr['low'])} – {_n(vr['high'])} đ/cp · biên an toàn "
@@ -942,7 +943,7 @@ Bố cục:
   Tab 📈 Phân tích kỹ thuật: biểu đồ giá (nến + MA/EMA/Bollinger, các khung chỉ báo RSI/MACD/ADX/MFI/OBV xem cùng lúc),
                              so sánh VN-Index, hiệu suất theo kỳ, xu hướng, điểm kỹ thuật, bảng chỉ báo, hỗ trợ/kháng cự
                              (đã gộp tab "Biểu đồ giá" cũ và trang "Phân tích kỹ thuật" ở thanh bên)
-  Tab 🎯 Khuyến nghị       : MỘT khuyến nghị theo khung đa lớp (ma trận F × T)
+  Tab 🎯 Khuyến nghị       : MỘT khuyến nghị theo khung đa lớp (ma trận F × R)
 Toàn bộ số liệu từ StockService.full_analysis() (dữ liệu thật); thiếu số liệu hiển thị "—".
 """
 
@@ -1723,7 +1724,7 @@ def _tab_val(analysis, p) -> None:
     if v.get("scope_change"):
         st.warning("⚠️ " + v["scope_change"]["text"] + " EV/EBITDA và DCF tạm không dùng; độ tin cậy giảm một bậc.")
     _kpis([("Thị giá", _f_stock_analysis(v.get("price")), f"Ngày {v.get('price_date') or '—'}", None),
-           # Góp ý GK (Vấn đề 2): độ tin cậy thấp → không đưa ra giá mục tiêu, số mô hình chỉ ghi "tham khảo"
+           # Độ tin cậy thấp → vẫn hiện giá mục tiêu kèm "chỉ tham khảo" (PDF làm giống)
            ("Giá mục tiêu", _f_stock_analysis(v.get("target_12m")), _target_range_stock_analysis(v), None) if v.get("available") or not v.get("target_12m") else
            ("Giá mục tiêu", _f_stock_analysis(v.get("target_12m")), f"Độ tin cậy {str(v.get('confidence') or 'thấp').lower()} – chỉ tham khảo", None),
            ("Upside", _f_stock_analysis(v.get("upside"), 1, "%", True),

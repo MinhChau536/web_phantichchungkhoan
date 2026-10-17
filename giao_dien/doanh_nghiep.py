@@ -183,7 +183,8 @@ def render_financial_ratios():
     r = ratios.iloc[-(years if period == "year" else years * 4):]
     periods = [key_to_label(k) for k in r.index]
     groups = {}
-    for key, (label, group, fmt, better) in RATIO_META.items():
+    from core.phan_tich_co_ban import ratio_meta_for
+    for key, (label, group, fmt, better) in ratio_meta_for(bool(summ.get("is_bank"))).items():
         if key in r.columns and r[key].notna().any():
             groups.setdefault(group, []).append((key, label, fmt))
     tabs = st.tabs(list(groups))
@@ -466,16 +467,6 @@ def render_company_news():
 
     st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
 
-    # ── Nhận định tin tức (core/tin_tuc.py): tâm lý, chủ đề & ý nghĩa, sự kiện doanh nghiệp ──
-    from core.tin_tuc import news_insight
-    events = None
-    try:
-        from core.pipeline import get_repo
-        events = get_repo().get_company_events(curr_sym)
-    except Exception:                                         # noqa: BLE001 – thiếu sự kiện vẫn hiện nhận định tin
-        events = None
-    ins = news_insight(all_articles, events)
-    _insight_panel(ins, T)
     group = st.toggle("Gộp tin trùng chủ đề", value=True, key=f"news_group_{curr_sym}",
                       help="Nhiều báo đưa cùng một sự kiện → chỉ hiện 1 bài đại diện, ghi số bài cùng chủ đề.")
     if group and filtered_articles:
@@ -513,62 +504,20 @@ def render_company_news():
         else:
             (tag_color, tag_bg), tag_text = T["neu"], "Trung tính"
 
-        st.markdown(f"""
-        <div style="margin-bottom: 18px; padding-bottom: 14px; border-bottom: 1px solid {T['line2']};">
-            <div style="margin-bottom: 4px;">
-                <a href="{url}" target="_blank" rel="noopener noreferrer" 
-                   style="color: {T['link']}; font-size: 18px; font-weight: 700; text-decoration: none; line-height: 1.45;">
-                    {title}
-                </a>
-            </div>
-            <div style="font-size: 14.5px; color: {T['muted']}; font-weight: 500; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 4px;">
-                <span>{source}</span>
-                <span>•</span>
-                <span>{date_str}</span>
-                <span>•</span>
-                <a href="{url}" target="_blank" rel="noopener noreferrer" 
-                   style="color: {T['link']}; text-decoration: none; font-weight: 600;">
-                    Mở bài gốc ↗
-                </a>
-                <b style="margin-left: 6px; padding: 2px 9px; background: {tag_bg}; color: {tag_color}; border-radius: 6px; font-size: 13.5px; font-weight: 700;">
-                    {tag_text}
-                </b>
-                {f'<span style="font-size:13px;color:{T["muted"]};">· +{item["_dup"]} bài cùng chủ đề</span>' if item.get("_dup") else ''}
-            </div>
-            {f'<div style="font-size: 15.5px; color: {T["sub"]}; margin-top: 6px; line-height: 1.6;">{summary[:260]}...</div>' if len(summary) > 20 else ''}
-        </div>
-        """, unsafe_allow_html=True)
-
-
-def _insight_panel(ins: dict, T: dict) -> None:
-    """Khối 'Nhận định tin tức' – tâm lý tổng hợp, chủ đề nổi bật & ý nghĩa với cổ phiếu, sự kiện doanh nghiệp."""
-    if not ins.get("n") and not ins.get("events"):
-        return
-    c, n = ins["counts"], max(1, ins["n"])
-    bar = "".join(f'<span style="display:inline-block;height:10px;width:{c[k] / n * 100:.1f}%;background:{col}"></span>'
-                  for k, col in (("pos", "#16a34a"), ("neu", "#94a3b8"), ("neg", "#dc2626")) if c[k])
-    tone_col = {"Nghiêng tích cực": "#15803d", "Nghiêng tiêu cực": "#b91c1c"}.get(ins["tone"], T["sub"])
-    themes = "".join(
-        f'<div style="margin:6px 0"><b style="color:{T["head"]}">{safe_html(t["label"])}</b> '
-        f'<span style="color:{T["muted"]};font-size:13px">({t["articles"]} bài)</span><br>'
-        f'<span style="color:{T["sub"]};font-size:14px">{safe_html(t["implication"])}</span></div>'
-        for t in ins["themes"][:4])
-    evs = "".join(f'<li style="margin:4px 0;color:{T["sub"]};font-size:14px">{safe_html(e)}</li>' for e in ins["events"])
-    heads = "".join(f'<li style="margin:3px 0;color:{T["text"]};font-size:14.5px">{safe_html(h)}</li>' for h in ins["headline"])
-    flags = (f'<div style="margin-top:8px;color:#b91c1c;font-weight:600;font-size:14px">⚠️ Cần xem lại giả định định giá: '
-             f'{safe_html(", ".join(ins["flags"]))}</div>') if ins["flags"] else ""
-    st.markdown(f"""
-    <div style="border:1px solid {T['line']};border-left:5px solid #16a34a;border-radius:14px;padding:14px 18px;margin:4px 0 12px">
-      <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px">
-        <div style="font-size:17px;font-weight:800;color:{T['head']}">🧭 Nhận định tin tức</div>
-        <div style="font-weight:700;color:{tone_col}">{safe_html(ins['tone'])} · {c['pos']} tích cực · {c['neu']} trung tính · {c['neg']} tiêu cực</div>
-      </div>
-      <div style="margin:8px 0 6px;border-radius:5px;overflow:hidden;background:{T['line2']};line-height:0">{bar}</div>
-      <ul style="margin:6px 0 4px 18px;padding:0">{heads}</ul>
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:4px 26px;margin-top:6px">
-        <div>{('<div style="font-weight:700;color:' + T['head'] + ';margin-top:4px">Chủ đề nổi bật & ý nghĩa</div>' + themes) if themes else ''}</div>
-        <div>{('<div style="font-weight:700;color:' + T['head'] + ';margin-top:4px">Sự kiện doanh nghiệp đáng chú ý</div><ul style="margin:4px 0 0 18px;padding:0">' + evs + '</ul>') if evs else ''}</div>
-      </div>
-      {flags}
-      <div style="font-size:12px;color:{T['muted']};margin-top:8px">Tạo tự động theo quy tắc từ khóa – chỉ để tham khảo, không thay thế việc đọc bài gốc.</div>
-    </div>""", unsafe_allow_html=True)
+        dup = (f'<span style="font-size:13px;color:{T["muted"]};">· +{item["_dup"]} bài cùng chủ đề</span>'
+               if item.get("_dup") else "")
+        summ = (f'<div style="font-size:15.5px;color:{T["sub"]};margin-top:6px;line-height:1.6;">{summary[:260]}...</div>'
+                if len(summary) > 20 else "")
+        # Dựng HTML trên MỘT dòng: trước đây chuỗi nhiều dòng thụt lề + dòng trống (khi không có "_dup") làm Markdown kết
+        # thúc khối HTML sớm → phần tóm tắt phía sau hiện thành khối code "</div><div style=...".
+        st.markdown(
+            f'<div style="margin-bottom:18px;padding-bottom:14px;border-bottom:1px solid {T["line2"]};">'
+            f'<div style="margin-bottom:4px;"><a href="{url}" target="_blank" rel="noopener noreferrer" '
+            f'style="color:{T["link"]};font-size:18px;font-weight:700;text-decoration:none;line-height:1.45;">{title}</a></div>'
+            f'<div style="font-size:14.5px;color:{T["muted"]};font-weight:500;display:flex;align-items:center;gap:8px;'
+            f'flex-wrap:wrap;margin-top:4px;"><span>{source}</span><span>•</span><span>{date_str}</span><span>•</span>'
+            f'<a href="{url}" target="_blank" rel="noopener noreferrer" style="color:{T["link"]};text-decoration:none;'
+            f'font-weight:600;">Mở bài gốc ↗</a>'
+            f'<b style="margin-left:6px;padding:2px 9px;background:{tag_bg};color:{tag_color};border-radius:6px;'
+            f'font-size:13.5px;font-weight:700;">{tag_text}</b>{dup}</div>{summ}</div>',
+            unsafe_allow_html=True)

@@ -513,12 +513,12 @@ def render_pdf_report():
     _root = Path(__file__).resolve().parent.parent
     _need = [_root / "assets" / "report" / "cover_bg.jpg", _root / "assets" / "report" / "page_bg.jpg",
              _root / "assets" / "fonts" / "BeVietnamPro-Bold.ttf",
-             _root / "reports" / "cover.py"]
+             _root / "core" / "bao_cao_pdf.py"]
     _missing = [str(p.relative_to(_root)) for p in _need if not p.exists()]
     if _missing:
         st.warning("⚠️ Thiếu file giao diện báo cáo: " + ", ".join(f"`{m}`" for m in _missing)
                    + ". Báo cáo vẫn xuất được nhưng bìa/các trang sẽ là nền trơn và dùng phông mặc định. "
-                   "Hãy chép đè cả thư mục `assets` (và `reports`) từ bản zip mới nhất.")
+                   "Hãy chép đè cả thư mục `assets` (và `core`) từ bản zip mới nhất.")
 
     generate_btn = st.button(
         f"📄 TẠO BÁO CÁO PDF – {symbol}",
@@ -646,7 +646,7 @@ def render_pdf_report():
 
             except ImportError as e:
                 name = getattr(e, "name", "") or ""
-                if name.split(".")[0] in ("reports", "services", "data", "analytics", "components", "pages", "config"):
+                if name.split(".")[0] in ("core", "giao_dien"):
                     st.error(f"❌ Thiếu file trong dự án: `{name.replace('.', '/')}.py`. "
                              "Hãy giải nén lại bản zip mới nhất và chép đè TOÀN BỘ thư mục GPM1.")
                 else:
@@ -696,6 +696,14 @@ def render_data_sources():
 | Tài liệu PDF | {' → '.join(settings.DOCUMENT_SOURCES)} → website DN | luôn có thể tải lên tay |
 """)
     st.caption("Đổi thứ tự trong file .env: DNSE_RECENT_DAYS, PRICE_HISTORY_SOURCES, FINANCIAL_SOURCES, DOCUMENT_SOURCES.")
+    try:
+        from core.nguon_du_lieu import vnstock_rate_status
+        rs = vnstock_rate_status()
+        st.caption(f"Lượt gọi vnstock 60 giây gần nhất: {rs['used']}/{rs['limit']} (app tự giữ dưới giới hạn 60 lượt/phút của "
+                   "bản Cộng đồng)" + (f" · đang tạm dừng gọi vnstock đến {datetime.fromtimestamp(rs['blocked_until']):%H:%M:%S}"
+                                      " – dùng dữ liệu đã lưu" if rs.get("blocked_until") else ""))
+    except Exception:                                           # noqa: BLE001
+        pass
 
     st.markdown("#### Giá realtime (DNSE OpenAPI)")
     _realtime_status()
