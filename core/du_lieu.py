@@ -855,7 +855,11 @@ CANONICAL_ITEMS: List[Item] = [
     Item("operating_profit", "is", "Lợi nhuận thuần từ HĐKD", ids=["operating_profit"],
          vi=["lợi nhuận thuần từ hoạt động kinh doanh", "lợi nhuận từ hoạt động kinh doanh", "lãi từ hoạt động kinh doanh",
              "lãi thuần từ hoạt động kinh doanh", "lợi nhuận thuần từ hđkd", "lợi nhuận hoạt động"],
-         en=["operating profit", "profit from operating activities", "net operating profit", "operating income"], exclude=_COMMON_EXCL + ["trước thuế", "before tax"]),
+         en=["operating profit", "profit from operating activities", "net operating profit", "operating income"],
+         # 16/10/2026: BCTC ngân hàng có "Lãi thuần từ hoạt động kinh doanh KHÁC / ngoại hối / chứng khoán…" → không phải
+         # LN thuần HĐKD (TCB 2025 bị ánh xạ 1.642 tỷ trong khi LNTT 32.538 tỷ)
+         exclude=_COMMON_EXCL + ["trước thuế", "before tax", "khác", "other", "ngoại hối", "foreign exchange", "chứng khoán",
+                                 "securities", "dịch vụ", "service", "góp vốn", "đầu tư"]),
     Item("profit_before_tax", "is", "Lợi nhuận trước thuế", ids=["profit_before_tax"],
          vi=["tổng lợi nhuận kế toán trước thuế", "lợi nhuận trước thuế", "lãi trước thuế", "ln trước thuế",
              "lãi ròng trước thuế", "lợi nhuận kế toán trước thuế", "tổng lợi nhuận trước thuế"],
@@ -2024,7 +2028,10 @@ class DataRepository:
         return pd.DataFrame()
 
     def get_price_history(self, symbol: str, start_date: str = "", end_date: str = "",
-                          days: int = 365, interval: str = "1D", force_refresh: bool = False) -> pd.DataFrame:
+                          days: int = 365, interval: str = "1D", force_refresh: bool = False,
+                          recent_only: bool = False) -> pd.DataFrame:
+        """recent_only=True: chỉ DNSE + giá đã lưu trong CSDL, KHÔNG gọi vnstock (dùng cho rổ so sánh ~40 mã – tránh hết
+        60 lượt/phút của vnstock khi DNSE lỗi tạm thời)."""
         symbol = symbol.upper().strip()
         end_dt = pd.to_datetime(end_date) if end_date else pd.Timestamp(datetime.now().date())
         start_dt = pd.to_datetime(start_date) if start_date else end_dt - pd.Timedelta(days=days)
@@ -2046,7 +2053,7 @@ class DataRepository:
         # 2) Đoạn cũ (lấy dư 10 ngày để có phiên trùng phục vụ nối chuỗi)
         older = pd.DataFrame()
         older_end = cutoff + pd.Timedelta(days=10) if not recent.empty else end_dt
-        if start_dt < cutoff or recent.empty:
+        if (start_dt < cutoff or recent.empty) and not recent_only:
             older = self._older_history(symbol, start_dt, older_end, interval, final=not recent.empty)
 
         merged, k = stitch_prices(recent, older)

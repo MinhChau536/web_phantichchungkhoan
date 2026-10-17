@@ -64,7 +64,7 @@ def s_overview() -> Dict[str, Any]:
             "Ứng dụng web phân tích cổ phiếu Việt Nam: từ dữ liệu thô → chỉ số → định giá → khuyến nghị → báo cáo PDF.",
             "Dữ liệu thật đa nguồn (DNSE realtime, vnstock, BCTC, PDF) – tự chuẩn hóa, ghi nguồn từng ô số liệu.",
             "Định giá 12 tháng bằng 6 phương pháp, trọng số theo ngành, có độ tin cậy và 3 kịch bản.",
-            "MỘT khuyến nghị theo khung đa lớp: bộ lọc loại trừ → Chất lượng, Định giá, Tăng trưởng, Thời điểm → ma trận F × T.",
+            "MỘT khuyến nghị theo khung đa lớp: bộ lọc loại trừ → điểm cơ bản F (Chất lượng, Định giá, Tăng trưởng) × điểm So với thị trường R.",
             "Có công cụ backtest không nhìn trước để kiểm chứng khung khuyến nghị (cần chạy lại trước khi công bố hiệu quả).",
         ],
         "blocks": [
@@ -85,7 +85,7 @@ def s_overview() -> Dict[str, Any]:
                 ["5. Định giá", "6 phương pháp, trọng số theo hồ sơ ngành, Ke theo CAPM", "Giá mục tiêu, độ tin cậy"],
                 ["6. Rủi ro", "Suy giảm KD, đòn bẩy, dòng tiền, pha loãng, định giá, dữ liệu, thị trường",
                  "Mức rủi ro Thấp → Nghiêm trọng"],
-                ["7. Khuyến nghị", "Khung đa lớp: bộ lọc loại trừ + 4 lớp Q/V/G/T + ma trận F × T",
+                ["7. Khuyến nghị", "Khung đa lớp: bộ lọc loại trừ + điểm F (Q/V/G) và R (so với thị trường) + ma trận F × R",
                  "MỘT nhãn: MUA / TÍCH LŨY TỪNG PHẦN / NẮM GIỮ / THEO DÕI / GIẢM TỶ TRỌNG–TRÁNH"],
                 ["8. Báo cáo", "PDF kiểu báo cáo CTCK, cá nhân hóa theo hồ sơ nhà đầu tư", "Báo cáo phân tích 1 mã"],
             ]),
@@ -114,11 +114,11 @@ PAGES = [
     ("🏛️ Tổng Quan Thị Trường", "Tổng quan thị trường",
      "Thẻ VN-Index, VN30, HNX, UPCoM (realtime trong phiên), biểu đồ nến chỉ số + MA20/MA50, độ rộng thị trường, bản đồ "
      "nhiệt theo ngành, top tăng/giảm/giá trị/khối lượng đột biến, cổ phiếu đang theo dõi.",
-     "Nắm bối cảnh chung trước khi xem từng mã; VN-Index so với MA50 là đầu vào của 'thời điểm' trong khuyến nghị."),
+     "Nắm bối cảnh chung trước khi xem từng mã; VN-Index so với MA200 là điều kiện thị trường để được MUA trong khuyến nghị."),
     ("🔍 Phân Tích Cổ Phiếu", "Phân tích cổ phiếu",
      "4 mục: 💰 Định giá (giá mục tiêu, Bear/Base/Bull, độ nhạy, độ tin cậy) · 📊 Cơ bản (Financial Health Score, "
      "chất lượng lợi nhuận, so sánh ngành) · 📈 Kỹ thuật (biểu đồ, chỉ báo, hỗ trợ/kháng cự, ATR) · 🎯 Khuyến nghị "
-     "(khung đa lớp – một nhãn duy nhất từ ma trận F × T).",
+     "(khung đa lớp – một nhãn duy nhất từ ma trận F × R).",
      "Trang trung tâm – toàn bộ quy trình phân tích một mã."),
     ("🔎 Lọc & So Sánh Cổ Phiếu", "Lọc và so sánh",
      "Bộ lọc theo chỉ số và bộ lọc mẫu (Value, Growth, Quality, Cổ tức, Momentum), xếp hạng tổng hợp; so sánh 2–5 mã "
@@ -366,8 +366,8 @@ def s_valuation() -> Dict[str, Any]:
             "6 phương pháp: P/E Forward, P/B–ROE, Thu nhập thặng dư, EV/EBITDA, DCF (FCFF), Chiết khấu cổ tức 2 giai đoạn.",
             "Trọng số theo HỒ SƠ NGÀNH (9 hồ sơ) – phương pháp không hợp lệ bị loại, trọng số chuẩn hóa lại.",
             "Giá mục tiêu (kỳ hạn 12 tháng) = Σ trọng số × giá trị từng phương pháp; kèm 3 kịch bản, độ nhạy và ĐỘ TIN CẬY (Cao/Trung bình/Thấp).",
-            "Độ tin cậy Thấp → 'CHƯA ĐỦ CƠ SỞ ĐỊNH GIÁ': không đưa ra giá mục tiêu, số mô hình chỉ là giá trị tham khảo.",
-            "Điểm Định giá (thẻ điểm) khi độ tin cậy thấp: 50% so với lịch sử 5 năm + 50% trung vị ngành theo vốn hóa; bỏ P/B nếu hồ sơ ngành loại P/B.",
+            "Độ tin cậy Thấp → 'CHƯA ĐỦ CƠ SỞ ĐỊNH GIÁ': giá mục tiêu vẫn hiển thị (app và PDF) nhưng ghi rõ 'chỉ tham khảo', không dùng cho biên an toàn và điều kiện MUA.",
+            "Điểm Định giá trên thẻ điểm = lớp V của khung khuyến nghị: bội số so với lịch sử 5 năm & ngành 50% · biên an toàn 30% · P/E so với ngành 20%.",
         ],
         "blocks": [
             ("h", "Chi phí vốn"),
@@ -449,10 +449,9 @@ def s_pillars() -> Dict[str, Any]:
             ("t", ["Trụ cột", "Trọng số", "Thành phần (điểm tối đa)"], [
                 ["Cơ bản", f"{W['fundamental']}%", "ROE (25) · Tăng trưởng doanh thu (20) · Biên LN ròng (20) · Nợ/VCSH (20) · "
                                                    "CFO/LNST (15); chất lượng lợi nhuận Yếu −15, Cần lưu ý −5"],
-                ["Định giá", f"{W['valuation']}%", "Định giá đủ tin cậy: từ tổng LN kỳ vọng 12 tháng (−20% → 0 điểm, +40% → 100). "
-                                                   "Chưa đủ tin cậy: P/E, P/B (trọng số theo hồ sơ ngành, bỏ P/B nếu ngành loại) – mỗi "
-                                                   "bội số 50% so với lịch sử 5 năm + 50% trung vị ngành theo vốn hóa; rẻ hơn > 30% → "
-                                                   "đủ điểm, ≤ mốc → 70%, đắt ≤ 30% → 40%, đắt > 30% → 10%"],
+                ["Định giá", f"{W['valuation']}%", "Dùng ĐÚNG điểm lớp Định giá (V) của khung khuyến nghị: bội số P/E, P/B so với lịch sử 5 năm "
+                                                   "& trung vị ngành (50) · biên an toàn từ đầu thấp khoảng định giá, chỉ khi "
+                                                   "định giá đủ tin cậy (30) · P/E xếp hạng % trong ngành (20)"],
                 ["Kỹ thuật", f"{W['technical']}%", "MA (25) · RSI (15) · MACD (15) · Khối lượng (10) · Bollinger (10) · ADX (10) · "
                                                   "Dòng tiền (15)"],
                 ["Động lượng", f"{W['momentum']}%", "Ngắn hạn 5/10 phiên (25) · Trung hạn 20 phiên (20) · Dài hạn 60/120 phiên (20) · "
@@ -474,7 +473,7 @@ def s_recommendation() -> Dict[str, Any]:
     m = _cfg().get("multilayer") or {}
     wf = m.get("weights_f") or {"Q": 0.4, "V": 0.35, "G": 0.25}
     wr = m.get("weights_r") or {}
-    fs, fm = m.get("f_strong", 70), m.get("f_mid", 55)
+    fs, fm = m.get("f_strong", 65), m.get("f_mid", 55)
     rs, rw = m.get("r_strong", 60), m.get("r_weak", 40)
     from core.khuyen_nghi import MATRIX_ROWS
     return {
@@ -485,7 +484,7 @@ def s_recommendation() -> Dict[str, Any]:
             "Bước 1 – bộ lọc loại trừ; Bước 2 – điểm cơ bản F (Chất lượng Q, Định giá V, Tăng trưởng G) và điểm SO VỚI THỊ "
             "TRƯỜNG R (thứ hạng trong rổ VN30 + cùng ngành); Bước 3 – ma trận F × R.",
             "Doanh nghiệp tốt CHƯA đủ để MUA: cổ phiếu phải mạnh hơn thị trường, thị trường chung không giảm (VN-Index trên "
-            "MA200) và lợi nhuận kỳ vọng phải bù được chi phí vốn Ke.",
+            "MA200 – trừ cổ phiếu dẫn dắt thuộc top 30% rổ) và lợi nhuận kỳ vọng phải bù được chi phí vốn Ke.",
             "Giá mục tiêu chỉ là MỘT đầu vào của lớp Định giá – không tự quyết định nhãn; định giá trình bày dạng KHOẢNG.",
         ],
         "blocks": [
@@ -499,8 +498,8 @@ def s_recommendation() -> Dict[str, Any]:
                     "báo/kiểm soát/đình chỉ, chậm công bố BCTC."]),
             ("h", "Bước 2 – Các lớp điểm (0–100)"),
             ("t", ["Lớp", "Thành phần trong app"], [
-                ["Chất lượng (Q)", "Nhóm sinh lời, thanh toán, cơ cấu vốn, dòng tiền của Sức khỏe tài chính (60%) · Piotroski "
-                                   "F-score (20%) · ROE xếp hạng % trong ngành (20%)"],
+                ["Chất lượng (Q)", "Nhóm sinh lời, thanh toán, cơ cấu vốn, dòng tiền của Sức khỏe tài chính (70%) · ROE xếp "
+                                   "hạng % trong ngành (30%). F-score không cộng vào Q (trùng tiêu chí) – chỉ dùng làm điều kiện sai luận điểm"],
                 ["Định giá (V)", "Bội số so với lịch sử 5 năm + trung vị ngành theo vốn hóa (50%) · biên an toàn từ đầu thấp "
                                  "khoảng định giá (30%, chỉ khi định giá đủ tin cậy) · P/E xếp hạng % trong ngành (20%)"],
                 ["Tăng trưởng (G)", "Nhóm tăng trưởng của Sức khỏe tài chính – EPS điều chỉnh, doanh thu, LN cốt lõi (70%) · "
@@ -516,9 +515,12 @@ def s_recommendation() -> Dict[str, Any]:
              "> −1,78 (−5, chỉ là cờ cảnh báo). Lớp thiếu dữ liệu loại khỏi mẫu số."),
             ("h", "Bước 3 – Ma trận khuyến nghị"),
             ("t", ["Điểm cơ bản", f"R ≥ {rs} (mạnh hơn thị trường)", f"{rw} ≤ R < {rs} (ngang)", f"R < {rw} (yếu hơn)"],
-             [[r[0].replace("70", str(fs)).replace("55", str(fm)), r[1], r[2], r[3]] for r in MATRIX_ROWS]),
-            ("ul", ["MUA cần ĐỦ: F ≥ 70, R ≥ 60, VN-Index trên MA200 và tổng LN kỳ vọng ≥ Ke; thiếu một điều kiện → TÍCH LŨY TỪNG PHẦN.",
-                    "Doanh nghiệp tốt nhưng cổ phiếu yếu hơn thị trường (F ≥ 70, R < 40) → THEO DÕI, chờ R vượt 40 hoặc giá lấy lại MA200.",
+             [[r[0].replace("65", f"{fs:g}").replace("55", str(fm)), r[1], r[2], r[3]] for r in MATRIX_ROWS]),
+            ("ul", [f"MUA cần ĐỦ: F ≥ {fs:g}, R ≥ {rs:g}, VN-Index trên MA200 và tổng LN kỳ vọng ≥ Ke; thiếu một điều kiện → TÍCH LŨY TỪNG PHẦN.",
+                    f"Ngoại lệ cổ phiếu dẫn dắt: VN-Index dưới MA200 nhưng mã thuộc top {m.get('leader_top_pct', 0.3):.0%} xếp hạng sức "
+                    "mạnh giá trong rổ (vd hạng 8/30) → vẫn được MUA, kèm lưu ý giải ngân từng phần – cổ phiếu mạnh hơn phần lớn "
+                    "rổ khi thị trường yếu thường là nhóm dẫn dắt.",
+                    f"Doanh nghiệp tốt nhưng cổ phiếu yếu hơn thị trường (F ≥ {fs:g}, R < {rw:g}) → THEO DÕI, chờ R vượt {rw:g} hoặc giá lấy lại MA200.",
                     "TÍCH LŨY TỪNG PHẦN: chia vốn 3 phần – phần đầu khi nhãn xuất hiện, các phần sau khi R ≥ 60 hoặc BCTC quý xác nhận.",
                     "THEO DÕI ở ô F < 55, R ≥ 60: đà giá thiếu nền tảng – rủi ro đầu cơ.",
                     f"Khoảng định giá = thấp–cao của các phương pháp hợp lệ; lệch nhau > {m.get('dispersion_low_conf', 0.4):.0%} → "
@@ -527,7 +529,7 @@ def s_recommendation() -> Dict[str, Any]:
                     "sai, độ tin cậy và câu cảnh báo pháp lý.",
                     "Cá nhân hóa chỉ đổi MỨC PHÙ HỢP và TỶ TRỌNG theo hồ sơ – không sinh nhãn riêng.",
                     "Điểm 5 trụ cột giữ làm điểm SÀNG LỌC THAM KHẢO, không phải khuyến nghị."]),
-            ("note", "Ngưỡng 70 / 55 (F), 60 / 40 (R) và trọng số là tham số khởi điểm của khung, chưa hiệu chỉnh trên dữ liệu Việt Nam – "
+            ("note", f"Ngưỡng {fs:g} / {fm:g} (F), {rs:g} / {rw:g} (R) và trọng số là tham số khởi điểm của khung, chưa hiệu chỉnh trên dữ liệu Việt Nam – "
                      "cần backtest không chồng lấn trước khi dùng thật. Chống đổi nhãn liên tục (3 điểm / 5 phiên) sẽ làm sau."),
         ],
     }
@@ -543,7 +545,7 @@ def s_risk() -> Dict[str, Any]:
         "key": "risk", "icon": "🛡️", "title": "Đánh giá rủi ro",
         "pitch": [
             "Rủi ro tính từ số liệu thật: suy giảm kinh doanh, đòn bẩy, dòng tiền, pha loãng, định giá, dữ liệu, thị trường.",
-            "Rủi ro NGHIÊM TRỌNG chặn khuyến nghị (→ CHƯA ĐỦ CƠ SỞ).",
+            "Rủi ro NGHIÊM TRỌNG là một điều kiện của bộ lọc loại trừ: không được nhận MUA / TÍCH LŨY (hạ về THEO DÕI).",
             "Mức tổng thể: Nghiêm trọng / Cao / Trung bình / Thấp.",
         ],
         "blocks": [
@@ -688,7 +690,7 @@ def explain_symbol(analysis: Dict[str, Any]) -> Dict[str, Any]:
 def hero_stats() -> List[tuple]:
     v = _cfg()["valuation"]
     return [("6", "phương pháp định giá"), (str(len(v["method_profiles"])), "hồ sơ ngành"), ("5", "trụ cột chấm điểm"),
-            ("370+", "kiểm thử tự động"), ("+23,3%", "LN 12T nhóm MUA (backtest mô hình cũ)")]
+            ("360+", "kiểm thử tự động"), ("6", "nhãn khuyến nghị duy nhất")]
 
 
 def visual(key: str) -> Optional[Dict[str, Any]]:

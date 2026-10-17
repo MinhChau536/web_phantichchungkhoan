@@ -523,16 +523,18 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "bank_eta_severe": 4.0,        # VCSH/TTS ngân hàng (%) dưới mức này → nghiêm trọng
         "dilution_high": 0.10,         # tăng số CP bình quân/năm
     },
-    # ── Khung khuyến nghị đa lớp (15/10/2026) – MỘT nhãn duy nhất từ ma trận F × T ───────────────────────
+    # ── Khung khuyến nghị đa lớp (15/10/2026) – MỘT nhãn duy nhất từ ma trận F × R ───────────────────────
     # Tham số khởi điểm theo tài liệu "Khung khuyến nghị cổ phiếu đa lớp" v1.0 – CHƯA hiệu chỉnh trên dữ liệu VN,
     # phải backtest không chồng lấn trước khi dùng thật (tools/reco_trend / trang Backtest).
     "multilayer": {
         "weights_f": {"Q": 0.40, "V": 0.35, "G": 0.25},
         # T: động lượng 40 · MA 30 · khối ngoại 20 · khối lượng 10 – chưa có dữ liệu khối ngoại → chia lại tỷ lệ
         "weights_t": {"momentum": 40, "ma": 30, "foreign": 20, "volume": 10},
-        "f_strong": 70, "f_mid": 55, "t_good": 50,
+        "f_strong": 65, "f_mid": 55,   # 16/10/2026: 70 → 65 (theo yêu cầu nhóm; chưa backtest)
+        "t_good": 50,
         # Trục thứ hai = SỨC MẠNH SO VỚI THỊ TRƯỜNG R (thứ hạng % trong rổ VN30 + mã cùng ngành; trung vị = 50)
         "weights_r": {"momentum": 60, "ma200": 25, "hurdle": 15},
+        "leader_top_pct": 0.30,   # VN-Index dưới MA200: mã thuộc top 30% sức mạnh giá trong rổ vẫn được MUA (16/10/2026)
         "r_strong": 60, "r_weak": 40, "min_universe": 10,
         "market_gate": True,                     # VN-Index dưới MA200 → không MUA (tối đa TÍCH LŨY TỪNG PHẦN)
         "max_penalty": 15,

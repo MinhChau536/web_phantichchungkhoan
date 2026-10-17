@@ -570,6 +570,75 @@ def _trip(src: str, why: str) -> None:
     logger.warning("vnstock %s lỗi mạng – tạm bỏ qua nguồn này %d phút (%s)", src.upper(), NETWORK_COOLDOWN // 60, why[:160])
 
 
+# ── Giới hạn lượt gọi vnstock (bản Cộng đồng 60 lượt/phút) ──────────────────────────────────────────────────
+# Hết lượt, vnstock in khung "ĐÃ HẾT HẠN MỨC LƯỢT GỌI" rồi gọi sys.exit() → SystemExit KHÔNG bị "except Exception" bắt và
+# làm dừng cả trang Streamlit. Nay: (1) tự đếm lượt gọi theo cửa sổ 60 giây, không vượt VNSTOCK_MAX_PER_MIN (mặc định 50,
+# chừa lượt cho vnstock tự gọi nội bộ); hết lượt thì chờ tối đa VNSTOCK_MAX_WAIT giây, quá thì bỏ qua lệnh gọi đó (các nguồn
+# khác / CSDL đã lưu dùng thay); (2) bắt SystemExit / lỗi "rate limit" → tạm dừng mọi lệnh gọi vnstock ~60 giây.
+import collections as _collections
+
+VN_MAX_PER_MIN = int(os.getenv("VNSTOCK_MAX_PER_MIN", "50"))
+VN_MAX_WAIT = float(os.getenv("VNSTOCK_MAX_WAIT", "6"))
+# Công cụ backtest đặt True: cần ĐỦ dữ liệu hơn tốc độ → hết lượt thì ném lại SystemExit để công cụ chờ rồi chạy lại mã đó
+# (không được lặng lẽ thiếu dữ liệu). App giữ False: bỏ qua lệnh gọi, dùng dữ liệu đã lưu, không dừng trang.
+RAISE_ON_RATE_LIMIT = False
+_VN_CALLS: "_collections.deque[float]" = _collections.deque()
+_VN_LOCK = threading.Lock()
+_VN_BLOCKED_UNTIL = [0.0]
+_RATE_MARKERS = ("rate limit", "hạn mức", "too many requests", "lượt gọi")
+
+
+class VnstockRateLimit(Exception):
+    """vnstock báo hết lượt gọi (đã đổi từ SystemExit sang Exception thường)."""
+
+
+def _vn_slot() -> bool:
+    """Xin một lượt gọi vnstock; False = đang hết lượt (đã chờ VN_MAX_WAIT giây mà chưa có lượt)."""
+    deadline = time.time() + VN_MAX_WAIT
+    while True:
+        now = time.time()
+        if _VN_BLOCKED_UNTIL[0] > now:
+            if _VN_BLOCKED_UNTIL[0] > deadline:
+                return False
+            time.sleep(min(1.0, _VN_BLOCKED_UNTIL[0] - now))
+            continue
+        with _VN_LOCK:
+            while _VN_CALLS and now - _VN_CALLS[0] >= 60:
+                _VN_CALLS.popleft()
+            if len(_VN_CALLS) < VN_MAX_PER_MIN:
+                _VN_CALLS.append(now)
+                return True
+            free_at = _VN_CALLS[0] + 60
+        if free_at > deadline:
+            return False
+        time.sleep(min(1.0, max(0.05, free_at - now)))
+
+
+def _vn_rate_hit(why: str) -> None:
+    already = _VN_BLOCKED_UNTIL[0] > time.time()
+    _VN_BLOCKED_UNTIL[0] = time.time() + 61
+    if not already:
+        logger.warning("vnstock hết lượt gọi (60 lượt/phút) – tạm dừng gọi vnstock 1 phút, dùng dữ liệu đã lưu (%s)", why[:120])
+
+
+def vnstock_rate_status() -> Dict[str, Any]:
+    """Cho trang Nguồn dữ liệu: số lượt đã gọi trong 60 giây gần nhất và thời điểm hết tạm dừng (nếu có)."""
+    now = time.time()
+    with _VN_LOCK:
+        used = sum(1 for t in _VN_CALLS if now - t < 60)
+    return {"used": used, "limit": VN_MAX_PER_MIN, "blocked_until": _VN_BLOCKED_UNTIL[0] if _VN_BLOCKED_UNTIL[0] > now else None}
+
+
+def _guard_exit(fn: Callable[[], Any]) -> Callable[[], Any]:
+    """Bọc lệnh gọi vnstock: SystemExit (vnstock tự thoát khi hết lượt) → VnstockRateLimit."""
+    def run():
+        try:
+            return fn()
+        except SystemExit as exc:                    # noqa: TRY302 – vnstock gọi sys.exit() khi hết lượt
+            raise VnstockRateLimit(f"vnstock thoát (SystemExit {exc.code}) – hết lượt gọi") from None
+    return run
+
+
 def source_cooldowns() -> Dict[str, float]:
     """Các nguồn vnstock đang tạm bỏ qua → thời điểm hết hạn (epoch)."""
     now = time.time()
@@ -754,6 +823,12 @@ class VnstockClient(BaseProvider):
             self._error_message = f"{label}: nguồn {src.upper()} tạm bỏ qua đến {time.strftime('%H:%M:%S', time.localtime(until))} (lỗi mạng trước đó)"
             return None
         for fn in fns:
+            if not _vn_slot():
+                if RAISE_ON_RATE_LIMIT:
+                    raise SystemExit("vnstock: chưa có lượt gọi trống")
+                self._error_message = f"{label}: tạm hết lượt gọi vnstock (60 lượt/phút) – dùng dữ liệu đã lưu"
+                return None
+            fn = _guard_exit(fn)
             t0 = time.time()
             try:
                 if not _POOL_SLOTS.acquire(timeout=0.25):
@@ -783,6 +858,11 @@ class VnstockClient(BaseProvider):
             except Exception as exc:
                 self._error_message = f"{label}: {exc}"
                 logger.debug("vnstock %s failed: %s", label, exc)
+                if isinstance(exc, VnstockRateLimit) or any(m in str(exc).lower() for m in _RATE_MARKERS):
+                    _vn_rate_hit(f"{label}: {exc}")
+                    if RAISE_ON_RATE_LIMIT:
+                        raise SystemExit(f"vnstock hết lượt gọi: {exc}") from None
+                    break
                 if _is_network_error(exc) or time.time() - t0 > SLOW_CALL_SEC:
                     _trip(src, f"{label}: {exc}")
                     break

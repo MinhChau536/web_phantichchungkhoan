@@ -182,6 +182,47 @@ def _num(s: str) -> Optional[float]:
         return None
 
 
+def _share_event_lines(events: Any, rows: List[Tuple[str, str]]) -> List[str]:
+    """16/10/2026: MỖI đợt thưởng / cổ tức bằng cổ phiếu một dòng (trước đây chỉ lấy đợt đầu tiên → TCB mất đợt cổ tức CP
+    50%), kèm TRẠNG THÁI thay vì mặc nhiên khẳng định "giá đã được điều chỉnh":
+      • GDKHQ ở tương lai → chưa diễn ra; • đã niêm yết bổ sung → đã thực hiện;
+      • qua GDKHQ nhưng chưa thấy niêm yết bổ sung → CHƯA XÁC NHẬN, cần đối chiếu công bố chính thức."""
+    out: List[str] = []
+    today = pd.Timestamp.now().normalize()
+    sev = []
+    if isinstance(events, pd.DataFrame):
+        try:
+            from core.nguon_du_lieu import parse_share_events
+            sev = parse_share_events(events)
+        except Exception:                                   # noqa: BLE001
+            sev = []
+    seen = set()
+    for e in sorted(sev, key=lambda x: x["date"], reverse=True)[:4]:
+        key = (e["date"], round(e["ratio"], 4))
+        if key in seen:                                     # cùng ngày GDKHQ + cùng tỷ lệ = một đợt (nguồn ghi trùng)
+            continue
+        seen.add(key)
+        kind = "Cổ tức bằng cổ phiếu" if "cổ tức" in (e.get("title") or "").lower() else "Cổ phiếu thưởng"
+        head = f"{kind} tỷ lệ {e['ratio'] * 100:.1f}% (GDKHQ {e['date']:%d/%m/%Y})"
+        if e["date"] > today:
+            out.append(f"{head}: chưa đến ngày GDKHQ – số CP và giá chưa thay đổi; khi thực hiện, giá tham chiếu được điều "
+                       "chỉnh giảm tương ứng (không phải giảm giá thật).")
+        elif e.get("listed") is not None and e["listed"] <= today:
+            out.append(f"{head}, niêm yết bổ sung {e['listed']:%d/%m/%Y}: đã thực hiện – giá tham chiếu đã điều chỉnh tại "
+                       "ngày GDKHQ; EPS/BVPS so sánh trên cùng cơ sở số CP mới.")
+        else:
+            out.append(f"{head}: đã qua ngày GDKHQ nhưng nguồn chưa có ngày niêm yết bổ sung – CHƯA XÁC NHẬN đã thực hiện, "
+                       "cần đối chiếu công bố chính thức (HOSE/HNX, website doanh nghiệp) về số CP thực phát hành.")
+    if not out:                                              # nguồn không có cột tỷ lệ/ngày GDKHQ → chỉ nêu theo tiêu đề
+        for d, t in rows:
+            m = re.search(r"(cổ phiếu thưởng|cổ tức bằng cổ phiếu)[^\d]*([\d.,]+)\s*%", t.lower())
+            if m:
+                out.append(f"{m.group(1).capitalize()} tỷ lệ {m.group(2)}% (công bố {d}): chưa xác định ngày GDKHQ / niêm "
+                           "yết bổ sung – cần đối chiếu công bố chính thức.")
+    return out
+
+
+
 def summarize_events(events: Any, recent: int = 30) -> List[str]:
     """Tóm tắt sự kiện doanh nghiệp đáng chú ý (tối đa `recent` sự kiện gần nhất)."""
     rows = _event_rows(events)[:recent]
@@ -205,13 +246,7 @@ def summarize_events(events: Any, recent: int = 30) -> List[str]:
             when = dates[-1] if len(dates) == 1 else f"{dates[0]}–{dates[-1]}"
             vol = f"{x['vol'] / 1e6:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
             out.append(f"Giao dịch nội bộ: {len(x['people'])} người đăng ký {lab} tổng ~{vol} triệu CP ({when}) – {tone}.")
-    for d, t in rows:
-        tl = t.lower()
-        m = re.search(r"cổ phiếu thưởng[^\d]*([\d.,]+)\s*%", tl)
-        if m:
-            out.append(f"Cổ phiếu thưởng tỷ lệ {m.group(1)}% (ngày {d}): giá đã được điều chỉnh tương ứng – không phải "
-                       "giảm giá thật; số CP tăng nhưng EPS/BVPS so sánh trên cùng cơ sở.")
-            break
+    out += _share_event_lines(events, rows)
     for d, t in rows:
         if "cbcnv" in t.lower() or "esop" in t.lower():
             out.append(f"Phát hành cho cán bộ nhân viên (ESOP) ngày {d}: pha loãng nhỏ, chi phí phúc lợi.")

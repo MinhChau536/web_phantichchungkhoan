@@ -477,6 +477,26 @@ def _last(series_like) -> Optional[float]:
         return None
 
 
+def calendar_returns(px: Optional[pd.DataFrame]) -> Dict[str, Optional[float]]:
+    """Lợi suất 1T/3T/12T (%) theo NGÀY LỊCH: giá phiên gần nhất ≤ mốc (30/91/365 ngày trước phiên cuối). Chuỗi không phủ
+    tới mốc (điểm gần nhất cách mốc > 10 ngày) → None, KHÔNG lấy điểm đầu chuỗi (16/10/2026 – trước đây "12T" = giá cuối ÷
+    giá đầu chuỗi ~3 năm → TCB +118,8% trong khi biên 52 tuần chỉ 27.770–40.790)."""
+    out: Dict[str, Optional[float]] = {"1m": None, "3m": None, "1y": None}
+    if px is None or px.empty or "close" not in px.columns:
+        return out
+    ts = pd.to_datetime(px["timestamp"] if "timestamp" in px.columns else px.index)
+    c = pd.Series(pd.to_numeric(px["close"], errors="coerce").to_numpy(), index=ts).dropna().sort_index()
+    if len(c) < 2:
+        return out
+    for k, days in (("1m", 30), ("3m", 91), ("1y", 365)):
+        cut = c.index[-1] - pd.Timedelta(days=days)
+        base = c[c.index <= cut]
+        if base.empty or cut - base.index[-1] > pd.Timedelta(days=10) or not base.iloc[-1]:
+            continue
+        out[k] = (float(c.iloc[-1]) / float(base.iloc[-1]) - 1) * 100
+    return out
+
+
 def _stock_info(price, px, summ, analysis, exchange, industry) -> List[Tuple[str, str]]:
     """Hộp thông tin cổ phiếu (giống trang 1 báo cáo CTCK)."""
     val = (summ or {}).get("valuation") or {}
@@ -1275,9 +1295,13 @@ class EquityReportPDF(FPDF):
                 self.set_text_color(*(LINK if url else col))
                 self.set_font(f, ("B" if (bold_first and j == 0) else "") + ("U" if url else ""), size)
                 txt = "" if v is None else str(v)
-                max_chars = int(w / (size * FONT_SCALE * 0.19)) if w else 99
-                if len(txt) > max_chars:
-                    txt = txt[: max_chars - 1] + "…"
+                # 16/10/2026: thu nhỏ cỡ chữ cho vừa ô (tối thiểu 75%) trước khi phải cắt "…" – nhãn bảng không bị cụt
+                fs_ = size
+                while w and fs_ > size * 0.75 and self.get_string_width(" " + txt + " ") > w:
+                    fs_ -= 0.2
+                    self.set_font(f, ("B" if (bold_first and j == 0) else "") + ("U" if url else ""), fs_)
+                while w and len(txt) > 4 and self.get_string_width(" " + txt + " ") > w:
+                    txt = txt[:-2] + "…"
                 self.cell(w, h, " " + txt + " ", align=a, fill=True, link=url or "")
             self.ln()
         self.set_text_color(*TEXT)
@@ -1285,21 +1309,50 @@ class EquityReportPDF(FPDF):
 
     def kv_grid(self, pairs: List[Tuple[str, str]], cols: int = 2, h: float = 5.5, size: float = 7.8,
                 x: float = 14, width: float = 182):
-        """Lưới nhãn – giá trị (vd thông tin cổ phiếu)."""
+        """Lưới nhãn – giá trị (vd thông tin cổ phiếu). 16/10/2026: giá trị dài (vd tên ngân hàng) không vừa nửa ô → chiếm
+        trọn một dòng (nhãn 26% · giá trị 74%), tự co chữ nếu vẫn dài – trước đây tên DN đè lên nhãn "Tên doanh nghiệp"."""
         f = self.font_name
         cw = width / cols
-        for i in range(0, len(pairs), cols):
+        self.set_font(f, "B", size)
+        rows: List[List[Tuple[str, str]]] = []
+        cur: List[Tuple[str, str]] = []
+        for lbl, val in pairs:
+            if self.get_string_width(str(val) + "  ") > cw * 0.48 and cols > 1:
+                if cur:
+                    rows.append(cur)
+                    cur = []
+                rows.append([(lbl, val)])
+                continue
+            cur.append((lbl, val))
+            if len(cur) == cols:
+                rows.append(cur)
+                cur = []
+        if cur:
+            rows.append(cur)
+        for ri, row in enumerate(rows):
             if self.get_y() + h > self.h - self.b_margin:
                 self.add_page()
             self.set_x(x)
-            for lbl, val in pairs[i:i + cols]:
-                self.set_fill_color(*(CARD_ALT if (i // cols) % 2 == 0 else CARD))
+            full = len(row) == 1 and cols > 1 and self.get_string_width(str(row[0][1]) + "  ") > cw * 0.48
+            for lbl, val in row:
+                lw, vw = (width * 0.26, width * 0.74) if full else (cw * 0.52, cw * 0.48)
+                self.set_fill_color(*(CARD_ALT if ri % 2 == 0 else CARD))
                 self.set_font(f, "", size)
                 self.set_text_color(*MUTED)
-                self.cell(cw * 0.52, h, " " + lbl, fill=True)
-                self.set_font(f, "B", size)
+                self.cell(lw, h, " " + lbl, fill=True)
+                fs_ = size
+                self.set_font(f, "B", fs_)
+                while fs_ > size * 0.75 and self.get_string_width(str(val) + "  ") > vw:
+                    fs_ -= 0.2
+                    self.set_font(f, "B", fs_)
+                txt = str(val)
+                while len(txt) > 6 and self.get_string_width(txt + "  ") > vw:
+                    txt = txt[:-2] + "…"
                 self.set_text_color(*TEXT)
-                self.cell(cw * 0.48, h, str(val) + " ", align="R", fill=True)
+                self.cell(vw, h, txt + " ", align="R", fill=True)
+            if len(row) < cols and not full:                 # dòng lẻ: tô nền phần còn lại cho đều
+                self.set_fill_color(*(CARD_ALT if ri % 2 == 0 else CARD))
+                self.cell(cw * (cols - len(row)), h, "", fill=True)
             self.ln()
         self.set_text_color(*TEXT)
         self.ln(1)
@@ -1529,10 +1582,13 @@ class PDFReportGenerator:
         # thay vì N/A, khớp với mục Định giá (14/10/2026).
         _fv = a.get("fv") or {}
         ref_tgt = a["target"] is None and _fv.get("methods") and _fv.get("target_12m")
-        # Góp ý GK (Vấn đề 2): độ tin cậy thấp → KHÔNG đưa giá mục tiêu lên ô nổi bật; số tham khảo chỉ ghi ở chú thích.
-        tgt_txt = _n(a["target"]) if a["target"] else ("Chưa đưa ra" if ref_tgt else "N/A")
-        up_txt = _n(a["upside"], 1, "%", sign=True) if a["upside"] is not None else ("—" if ref_tgt else "N/A")
+        # 16/10/2026 (thống nhất với app): độ tin cậy thấp → vẫn in giá mục tiêu nhưng chữ xám, ghi rõ "chỉ tham khảo".
+        tgt_txt = _n(a["target"]) if a["target"] else (_n(_fv.get("target_12m")) if ref_tgt else "N/A")
+        _up_ref = _fv.get("upside")
+        up_txt = (_n(a["upside"], 1, "%", sign=True) if a["upside"] is not None else
+                  (_n(_up_ref, 1, "%", sign=True) if ref_tgt and _up_ref is not None else "—" if ref_tgt else "N/A"))
         tgt_col = GREY if ref_tgt else GOLD_DK
+        tgt_sub = "chỉ tham khảo" if ref_tgt else None
         pdf.set_fill_color(*box_col)
         pdf.rect(14, y0, 58, 27, "F", round_corners=True, corner_radius=2.6)
         pdf.set_xy(14, y0 + 2.6)
@@ -1550,7 +1606,7 @@ class PDFReportGenerator:
                      new_x="LEFT", new_y="NEXT")
             pdf.cell(58, 3.8, f"Độ tin cậy khuyến nghị: {ml['reliability']['level'].lower()}", align="C")
             rng = (f"{vr['low'] / 1000:,.1f}–{vr['high'] / 1000:,.1f}k" if vr.get("available") else "—")
-            boxes = [("Giá hiện tại", _n(a["price"])), ("Giá mục tiêu", tgt_txt, tgt_col), ("Khoảng định giá", rng, NAVY),
+            boxes = [("Giá hiện tại", _n(a["price"])), ("Giá mục tiêu", tgt_txt, tgt_col, tgt_sub), ("Khoảng định giá", rng, NAVY),
                      ("Mức rủi ro", str(((a.get("inv") or {}).get("risk") or {}).get("level", "—")))]
         elif a.get("inv"):
             hs = (a["inv"].get("health") or {}).get("score")
@@ -1559,8 +1615,8 @@ class PDFReportGenerator:
                      align="C", new_x="LEFT", new_y="NEXT")
             if hs is not None:
                 pdf.cell(58, 3.8, f"Sức khỏe tài chính {hs:.0f}/100", align="C")
-            boxes = [("Giá hiện tại", _n(a["price"])), ("Giá mục tiêu", tgt_txt, tgt_col),
-                     ("Upside", up_txt, tgt_col),
+            boxes = [("Giá hiện tại", _n(a["price"])), ("Giá mục tiêu", tgt_txt, tgt_col, tgt_sub),
+                     ("Upside", up_txt, tgt_col, tgt_sub),
                      ("Mức rủi ro", str((a["inv"].get("risk") or {}).get("level", "—")))]
         else:
             pdf.cell(58, 4.2, (f"Lợi suất kỳ vọng {er:+.1f}%" if er is not None else "Chưa đủ dữ liệu định giá")
@@ -1580,6 +1636,11 @@ class PDFReportGenerator:
             pdf.set_text_color(*(box[2] if len(box) > 2 else GOLD_DK))
             pdf.set_font(pdf.big_font, "B", 12.5 if len(val) <= 8 else 10.5)
             pdf.cell(29, 9, val, align="C")
+            if len(box) > 3 and box[3]:
+                pdf.set_xy(bx_x, y0 + 19.5)
+                pdf.set_font(pdf.font_name, "", 6.4)
+                pdf.set_text_color(*GREY)
+                pdf.cell(29, 3.6, box[3], align="C")
             bx_x += 31.0
         pdf.set_text_color(*TEXT)
         pdf.set_y(y0 + 31)
@@ -1587,9 +1648,8 @@ class PDFReportGenerator:
             pdf.set_font(pdf.font_name, "", 6.8)
             pdf.set_text_color(*GREY)
             pdf.multi_cell(182, 3.6, f"Do độ tin cậy định giá {str(_fv.get('confidence') or 'thấp').lower()} "
-                                     f"({_fv.get('status') or 'chưa đủ cơ sở định giá'}), báo cáo không đưa ra giá mục tiêu. "
-                                     f"Giá trị tham khảo từ mô hình: {_n(_fv.get('target_12m'))} đ/cp – không dùng để ra quyết định "
-                                     "đầu tư; chi tiết ở mục Định giá.", new_x="LMARGIN", new_y="NEXT")
+                                     f"({_fv.get('status') or 'chưa đủ cơ sở định giá'}), giá mục tiêu {_n(_fv.get('target_12m'))} đ/cp "
+                                     "chỉ để tham khảo – không dùng để ra quyết định đầu tư; chi tiết ở mục Định giá.", new_x="LMARGIN", new_y="NEXT")
             pdf.set_text_color(*TEXT)
             pdf.ln(0.6)
         if ml:
@@ -2050,49 +2110,113 @@ class PDFReportGenerator:
         pdf.para("Số liệu quý từ BCTC quý đã công bố đến ngày định giá; dùng để kiểm chứng các nhận định có nhắc tới số quý "
                  "(ví dụ cảnh báo của mô hình dự phóng ở mục Định giá).", size=6.8, color=MUTED)
 
+    @staticmethod
+    def _fair_today_line(fv: dict, asum: dict) -> str:
+        """16/10/2026: ghi đúng cách tính. Giá trị hợp lý hôm nay = BÌNH QUÂN TRỌNG SỐ giá trị hôm nay của từng phương pháp
+        (không phải đúng một phép chia); kèm phép kiểm tra nhanh với Ke CHƯA làm tròn (2 chữ số thập phân) để người đọc tái tính
+        được – trước đây in "(giá mục tiêu + cổ tức) ÷ (1 + Ke)" với Ke làm tròn 12,6% → lệch ~15đ so với số in ra."""
+        ftd, tgt, ke = fv.get("fair_value_today"), fv.get("target_12m"), asum.get("ke")
+        div = fv.get("expected_dividend") if fv.get("dividends_included") else 0
+        line = (f"Giá trị hợp lý hôm nay ≈ {_n(ftd)} đ/cp = bình quân trọng số giá trị hôm nay của từng phương pháp (mỗi phương "
+                "pháp chiết khấu giá trị tại ngày mục tiêu và cổ tức về hôm nay theo Ke).")
+        if tgt and ke:
+            chk = (tgt + (div or 0)) / (1 + ke)
+            line += (f" Kiểm tra nhanh: ({_n(tgt)} + {_n(div or 0)}) ÷ (1 + {ke * 100:.2f}%) = {_n(chk)} đ/cp"
+                     + ("." if abs(chk - (ftd or chk)) < 1 else
+                        f" (chênh {_n(abs(chk - ftd))}đ vì mỗi phương pháp được chiết khấu riêng rồi mới lấy bình quân)."))
+        return line
+
     def _render_forecast_table(self, pdf: EquityReportPDF, a: dict):
-        """Góp ý GK (II.3): in bảng dự phóng kịch bản cơ sở của Forecast Engine (2 năm tới) cạnh năm thực tế gần nhất."""
+        """Bảng dự phóng kịch bản cơ sở của Forecast Engine – 5 NĂM (16/10/2026; trước đây chỉ 2 năm) cạnh kỳ thực hiện.
+        Ngân hàng: tăng trưởng tín dụng, TN lãi thuần, NIM, tổng TN hoạt động, CIR, chi phí dự phòng, LNST mẹ, ROE, EPS,
+        BVPS, thu nhập thặng dư. Phi tài chính: doanh thu, EBITDA, LNST mẹ, EPS, BVPS, ROE, cổ tức, FCFF."""
         f = (a.get("inv") or {}).get("forecast") or {}
         yrs = ((f.get("scenarios") or {}).get("base") or {}).get("years") or []
         if not f.get("available") or not yrs:
             return
-        yrs = yrs[:2]
+        yrs = yrs[:5]
+        base = f.get("base") or {}
+        fa = base.get("actual") or {}
         wide = a.get("fin_wide")
-        base_key = (f.get("base") or {}).get("key")
+        base_key = base.get("key")
         actual = wide.loc[base_key] if isinstance(wide, pd.DataFrame) and base_key in getattr(wide, "index", []) else None
         r = (a.get("fin_summary") or {}).get("ratios")
         act_r = r.loc[base_key] if isinstance(r, pd.DataFrame) and base_key in r.index else None
-        bank = a.get("is_bank")
-        rev_k = "total_operating_income" if bank and actual is not None and "revenue" not in actual.index else "revenue"
+        model = f.get("model")
+        bank = model == "bank" or (a.get("is_bank") and model != "roe")
+        fv = a.get("fv") or {}
+        ke = (fv.get("assumptions") or {}).get("ke")
 
         def g(row, k):
             v = row.get(k) if row is not None else None
             return None if v is None or (isinstance(v, float) and np.isnan(v)) else v
-        cols = [(f.get("base") or {}).get("label", "Thực tế").replace("Năm ", "") + " (TH)"] + \
-               [str(y.get("label", "")).replace("FY", "") + "F" for y in yrs]
-        rv = [g(actual, rev_k)] + [y.get("revenue") for y in yrs]
-        ni = [g(actual, "net_income_parent")] + [y.get("net_income_parent") for y in yrs]
+
+        def th(k, row=None, rk=None):
+            v = fa.get(k)
+            return v if v is not None else g(row, rk or k)
+
+        ttm = base.get("kind") == "TTM"
+        cols = [base.get("label", "Thực tế").replace("Năm ", "").replace("TTM ", "TTM ") + " (TH)"] + \
+               [str(y.get("label", "")).replace("FY", "").replace("12T đến ", "") + "F" for y in yrs]
+        bn = lambda v: _n(v / 1e9) if v is not None else "—"            # noqa: E731
+        pc = lambda v: _n(v * 100, 1, "%") if v is not None else "—"     # noqa: E731
 
         def gr(vals):
             out = ["—"]
             for a0, a1 in zip(vals[:-1], vals[1:]):
                 out.append(_n((a1 / a0 - 1) * 100, 1, "%", sign=True) if a0 and a1 and a0 > 0 else "—")
             return out
-        rows = [["Doanh thu (tỷ)"] + [_n(v / 1e9 if v else None) for v in rv], ["  +/- yoy"] + gr(rv)]
-        if not bank:
-            eb = [None] + [y.get("ebitda") for y in yrs]
-            rows.append(["EBITDA (tỷ)"] + [_n(v / 1e9) if v else "—" for v in eb])
-        rows += [["LNST cổ đông mẹ (tỷ)"] + [_n(v / 1e9 if v else None) for v in ni], ["  +/- yoy"] + gr(ni),
-                 ["EPS (đ/cp)"] + [_n(g(act_r, "eps"))] + [_n(y.get("eps")) for y in yrs],
-                 ["ROE"] + [_n(g(act_r, "roe"), 1, "%")] + [_n((y.get("roe") or 0) * 100, 1, "%") if y.get("roe") is not None else "—" for y in yrs],
-                 ["Cổ tức tiền mặt/CP (đ)"] + [_n(g(act_r, "dps"))] + [_n(y.get("dps")) for y in yrs]]
-        colors = [[None] * 4 if "yoy" not in r_[0] else [None] + [(GREEN if str(v).startswith("+") else RED if str(v).startswith("-") else None) for v in r_[1:]]
-                  for r_ in rows]
-        pdf.h3("Dự phóng tài chính – kịch bản cơ sở (Forecast Engine)", min_space=40)
-        pdf.table(["Chỉ tiêu"] + cols, rows, [62, 40, 40, 40], colors=colors, size=7.4)
-        pdf.para("TH = số thực hiện (EPS điều chỉnh theo số CP hiện hành); F = dự phóng kịch bản cơ sở từ BCTC đến ngày định giá – "
-                 "giả định tăng trưởng, biên lợi nhuận và tỷ lệ chi trả cổ tức ghi ở mục Kịch bản. Đây là ước tính mô hình, "
-                 "không phải kế hoạch của doanh nghiệp.", size=6.8, color=MUTED)
+
+        ni = [th("net_income_parent", actual)] + [y.get("net_income_parent") for y in yrs]
+        eq = [fa.get("equity_parent")] + [y.get("equity_parent") for y in yrs]
+        ri = ["—"] + [bn(ni[i] - ke * eq[i - 1]) if ke and ni[i] is not None and eq[i - 1] else "—" for i in range(1, len(ni))]
+        roe_th = fa.get("roe")
+        roe_th = roe_th * 100 if roe_th is not None else g(act_r, "roe")
+        common_tail = [
+            ("LNST cổ đông mẹ (tỷ)", [bn(v) for v in ni]), ("  +/- yoy", gr(ni)),
+            ("ROE", [_n(roe_th, 1, "%")] + [pc(y.get("roe")) for y in yrs]),
+            ("EPS (đ/cp)", [_n(th("eps", act_r))] + [_n(y.get("eps")) for y in yrs]),
+            ("BVPS (đ/cp)", [_n(fa.get("bvps"))] + [_n(y.get("bvps")) for y in yrs]),
+        ]
+        if bank:
+            toi = [th("total_operating_income", actual)] + [y.get("total_operating_income") for y in yrs]
+            nii = [fa.get("net_interest_income")] + [y.get("net_interest_income") for y in yrs]
+            rows = [("Tăng trưởng tín dụng", ["—"] + [pc(y.get("credit_growth")) for y in yrs]),
+                    ("Thu nhập lãi thuần (tỷ)", [bn(v) for v in nii]),
+                    ("NIM (xấp xỉ, trên tổng TS)", [pc(fa.get("nim"))] + [pc(y.get("nim")) for y in yrs]),
+                    ("Tổng thu nhập hoạt động (tỷ)", [bn(v) for v in toi]), ("  +/- yoy", gr(toi)),
+                    ("CIR", [pc(fa.get("cir"))] + [pc(y.get("cir")) for y in yrs]),
+                    ("Chi phí dự phòng (tỷ)", [bn(fa.get("provision"))] + [bn(abs(y["provision"]) if y.get("provision") is not None else None) for y in yrs])]
+            rows += common_tail + [("Thu nhập thặng dư (tỷ)", ri)]
+        elif model == "roe":
+            rows = common_tail + [("Cổ tức tiền mặt/CP (đ)", [_n(th("dps", act_r))] + [_n(y.get("dps")) for y in yrs]),
+                                  ("Thu nhập thặng dư (tỷ)", ri)]
+        else:
+            rv = [th("revenue", actual)] + [y.get("revenue") for y in yrs]
+            rows = [("Doanh thu (tỷ)", [bn(v) for v in rv]), ("  +/- yoy", gr(rv)),
+                    ("EBITDA (tỷ)", ["—"] + [bn(y.get("ebitda")) for y in yrs])]
+            rows += common_tail + [("Cổ tức tiền mặt/CP (đ)", [_n(th("dps", act_r))] + [_n(y.get("dps")) for y in yrs]),
+                                   ("FCFF (tỷ)", ["—"] + [bn(y.get("fcff")) for y in yrs])]
+        rows = [r_ for r_ in rows if any(v not in ("—", "N/A") for v in r_[1][1:]) or "yoy" in r_[0]]   # bỏ dòng không có số
+        pdf.h3("Dự phóng tài chính 5 năm – kịch bản cơ sở (Forecast Engine)", min_space=60)
+        self._period_table(pdf, "Chỉ tiêu", rows, cols, label_w=56.0)
+        vi = ((f.get("valuation_inputs") or {}).get("base") or {})
+        notes = [("Cột F = 12 tháng kết thúc tại tháng/năm ghi trên cột, tính từ kỳ gốc " + base.get("label", "")
+                  + (" (4 quý gần nhất)" if ttm else "") + "; TH = số thực hiện kỳ gốc (EPS, BVPS theo số CP hiện hành).")]
+        if vi.get("eps_fwd") is not None:
+            notes.append(f"EPS NTM dùng cho P/E Forward = {_n(vi['eps_fwd'])} đ/cp: 12 tháng kể từ NGÀY ĐỊNH GIÁ "
+                         f"({f.get('as_of')} → {vi.get('ntm_window_end')}), nội suy giữa hai cột F liền kề – khác EPS cột "
+                         f"{cols[1]} ({_n(yrs[0].get('eps'))}) vì lệch mốc thời gian.")
+        if ke and any(r_[0].startswith("Thu nhập thặng dư") for r_ in rows):
+            notes.append(f"Thu nhập thặng dư = LNST mẹ − Ke ({ke * 100:.2f}%) × VCSH mẹ đầu kỳ.")
+        if bank:
+            sh = (f.get("drivers") or {}).get("nii_share") or {}
+            notes.append("Ngân hàng: mô hình dự phóng GỘP tổng thu nhập hoạt động; TN lãi thuần = tổng TN hoạt động × "
+                         + (f"{sh['value'] * 100:.1f}% ({sh.get('basis')})" if sh.get("value") else "tỷ trọng lịch sử")
+                         + "; tổng tài sản tăng cùng dư nợ; NIM xấp xỉ = TN lãi thuần ÷ tổng TS bình quân; CIR = 1 − LN trước "
+                         "dự phòng ÷ tổng TN hoạt động. Đây là giả định trình bày, không đổi LNST/định giá.")
+        notes.append("Đây là ước tính mô hình theo lịch sử, không phải kế hoạch của doanh nghiệp.")
+        pdf.para(" ".join(notes), size=6.8, color=MUTED)
 
     # ─────────────────────────────────────────────────────────────────────────
     # 06 Phân tích kỹ thuật – biểu đồ và bảng chỉ báo đi liền nhau
@@ -2325,12 +2449,13 @@ class PDFReportGenerator:
                               ("Upside", _n(up, 1, "%", sign=True), GREEN if (up or 0) >= 0 else RED),
                               ("Tổng LN kỳ vọng", _n(er, 1, "%", sign=True), GREEN if (er or 0) >= 0 else RED)], h=18)
         else:
-            # Góp ý GK (Vấn đề 2): độ tin cậy thấp → không hiển thị giá mục tiêu nổi bật; số mô hình chỉ là "giá trị tham khảo".
-            self._tiles(pdf, [("Thị giá", _n(fv.get("price")), NAVY), ("Giá mục tiêu", "Chưa đưa ra", GREY),
-                              ("Giá trị tham khảo", _n(fv.get("target_12m")), GREY),
+            # 16/10/2026: độ tin cậy thấp → vẫn in giá mục tiêu (chữ xám) kèm "chỉ tham khảo", giống app.
+            self._tiles(pdf, [("Thị giá", _n(fv.get("price")), NAVY),
+                              ("Giá mục tiêu (chỉ tham khảo)", _n(fv.get("target_12m")), GREY),
+                              ("Upside (tham khảo)", _n(up, 1, "%", sign=True), GREY),
                               ("Độ tin cậy định giá", str(fv.get("confidence") or "Thấp"), RED)], h=18)
             pdf.para(f"Trạng thái: {fv.get('status')} (độ tin cậy {fv.get('confidence', '—').lower()}). Do độ tin cậy định giá thấp, "
-                     f"báo cáo KHÔNG đưa ra giá mục tiêu. Con số {_n(fv.get('target_12m'))} đ/cp chỉ là kết quả tham khảo từ "
+                     f"giá mục tiêu {_n(fv.get('target_12m'))} đ/cp chỉ là kết quả tham khảo từ "
                      f"{len(fv.get('methods') or [])} phương pháp ({', '.join(m['name'] for m in fv.get('methods') or [])}) và không nên "
                      "được dùng để ra quyết định đầu tư.", size=7.6, color=RED)
         hybrid = fv.get("model_engine") == "hybrid" or fv.get("profile") is not None
@@ -2439,8 +2564,7 @@ class PDFReportGenerator:
             f"Cổ tức tiền mặt dự kiến {_n(fv.get('expected_dividend'))} đ/cp ({_n(fv.get('dividend_yield'), 1, '%')}), "
             + ("đã cộng một lần vào tổng lợi nhuận kỳ vọng; giá mục tiêu là giá sau khi trả cổ tức."
                if fv.get("dividends_included") else "không cộng (chưa trả đều tiền mặt)."),
-            (f"Giá trị hợp lý hôm nay = (giá mục tiêu + cổ tức) ÷ (1 + Ke) ≈ {_n(fv.get('fair_value_today'))} đ/cp."
-             if hybrid else f"Giá trị nội tại quy về hôm nay = giá mục tiêu ÷ (1 + Ke) ≈ {_n(fv.get('intrinsic_today'))} đ/cp."),
+            (self._fair_today_line(fv, asum) if hybrid else f"Giá trị nội tại quy về hôm nay = giá mục tiêu ÷ (1 + Ke) ≈ {_n(fv.get('intrinsic_today'))} đ/cp."),
             f"Thị giá ngày {fv.get('price_date') or '—'}; BCTC năm gần nhất đến {fv.get('data_date') or '—'}; kỳ hạn {fv.get('horizon_months', 12)} tháng; "
             f"độ tin cậy định giá: {fv.get('confidence', '—')}.",
         ] + list(fv.get("notes") or [])
@@ -2466,7 +2590,7 @@ class PDFReportGenerator:
                  size=6.8, color=MUTED)
 
     def _ml_bars(self, pdf: EquityReportPDF, ml: dict):
-        """Thanh điểm 4 lớp Q/V/G/T + F của khung khuyến nghị đa lớp (trang tóm tắt)."""
+        """Thanh điểm Q/V/G, F và R của khung khuyến nghị đa lớp (trang tóm tắt)."""
         pdf.h3("Điểm khuyến nghị đa lớp (0–100)", min_space=40)
         wf = (ml.get("thresholds") or {}).get("weights_f") or {}
         rows = [("Chất lượng (Q)", ml.get("Q"), f"{wf.get('Q', 0.4) * 100:.0f}% F"),
@@ -2533,7 +2657,7 @@ class PDFReportGenerator:
         rel = ml.get("relative") or {}
         info = []
         if rel.get("rank") and not rel.get("fallback"):
-            info.append(f"Xếp hạng sức mạnh {rel['rank'][0]}/{rel['rank'][1]} trong rổ {rel.get('universe')}")
+            info.append(f"Xếp hạng sức mạnh giá (động lượng & MA200) {rel['rank'][0]}/{rel['rank'][1]} trong rổ {rel.get('universe')}")
         mk = rel.get("market") or {}
         if mk:
             info.append(f"VN-Index {mk['close']:,.0f} {'dưới' if mk['below'] else 'trên'} MA200 ({mk['ma200']:,.0f})")
@@ -2541,7 +2665,9 @@ class PDFReportGenerator:
         if hd.get("gap") is not None:
             info.append(f"tổng LN kỳ vọng {hd['er']:+.1f}% {'≥' if hd['pass'] else '<'} chi phí vốn Ke {hd['ke']:.1f}%")
         if info:
-            pdf.para("; ".join(info) + ". MUA cần: F ≥ 70, R ≥ 60, VN-Index trên MA200 và LN kỳ vọng ≥ Ke.", size=7.0, color=MUTED)
+            _th = ml.get("thresholds") or {}
+            pdf.para("; ".join(info) + f". MUA cần: F ≥ {_th.get('f_strong', 65):g}, R ≥ {_th.get('r_strong', 60):g}, VN-Index trên MA200 (hoặc mã thuộc top 30% "
+                     "sức mạnh giá trong rổ) và LN kỳ vọng ≥ Ke.", size=7.0, color=MUTED)
         if ml.get("blocked_by_exclusion"):
             pdf.para("Ô ma trận cho MUA/TÍCH LŨY nhưng mã vướng bộ lọc loại trừ → hạ về THEO DÕI.", size=7.0, color=RED)
         # thành phần 4 lớp
@@ -2591,7 +2717,8 @@ class PDFReportGenerator:
                 pdf.h3("Định giá", min_space=24)
                 pdf.para((f"Giá mục tiêu {_n(fv.get('target_12m'))} đ/cp, tổng LN kỳ vọng {_n(fv.get('expected_return'), 1, '%', sign=True)} "
                           f"(độ tin cậy {str(fv.get('confidence') or '—').lower()})." if fv.get("available") else
-                          "Chưa đưa ra giá mục tiêu do độ tin cậy định giá thấp; khoảng định giá ở trên chỉ để tham khảo.")
+                          f"Giá mục tiêu {_n(fv.get('target_12m'))} đ/cp chỉ để tham khảo do độ tin cậy định giá "
+                          f"{str(fv.get('confidence') or 'thấp').lower()}; khoảng định giá ở trên cũng chỉ để tham khảo.")
                          + " Định giá là MỘT đầu vào của lớp Định giá (V), không tự quyết định nhãn khuyến nghị.", size=7.8)
         else:
             y = pdf.get_y()
@@ -2728,38 +2855,57 @@ class PDFReportGenerator:
         font = "VN" if pdf.has_vn else "Helvetica"
         col_w = (182 - label_w) / max(len(periods), 1)
 
+        FS = 7.9                                   # 16/10/2026: 7,2 → 7,9 cho dễ đọc trên A4
+
         def head():
-            pdf.set_font(font, "B", 7.4)
+            pdf.set_font(font, "B", FS)
             pdf.set_fill_color(*BG_DEEP)
             pdf.set_text_color(*GOLD)
-            pdf.cell(label_w, 5, " " + title_col, fill=True)
+            pdf.cell(label_w, 5.2, " " + title_col, fill=True)
             for p in periods:
-                pdf.cell(col_w, 5, p, align="C", fill=True)
+                fs_ = FS
+                while fs_ > 6.2 and pdf.get_string_width(p) > col_w - 1:
+                    fs_ -= 0.2
+                    pdf.set_font(font, "B", fs_)
+                pdf.cell(col_w, 5.2, p, align="C", fill=True)
+                pdf.set_font(font, "B", FS)
             pdf.ln()
             pdf.set_text_color(*TEXT)
-            pdf.set_font(font, "", 7.2)
+            pdf.set_font(font, "", FS)
 
         if pdf.get_y() + 20 > pdf.h - pdf.b_margin:
             pdf.add_page()
         head()
         pdf.set_text_color(*TEXT)
-        pdf.set_font(font, "", 7.2)
+        pdf.set_font(font, "", FS)
         for i, (label, vals) in enumerate(rows):
             if pdf.get_y() + 4.6 > pdf.h - pdf.b_margin:
                 pdf.add_page()
                 head()
             if label.startswith("§"):
-                pdf.set_font(font, "B", 7.4)
+                pdf.set_font(font, "B", FS)
                 pdf.set_fill_color(*SUB_FILL)
                 pdf.set_text_color(*NAVY)
-                pdf.cell(182, 4.6, " " + label[1:], fill=True, new_x="LMARGIN", new_y="NEXT")
+                pdf.cell(182, 4.8, " " + label[1:], fill=True, new_x="LMARGIN", new_y="NEXT")
                 pdf.set_text_color(*TEXT)
-                pdf.set_font(font, "", 7.2)
+                pdf.set_font(font, "", FS)
                 continue
             pdf.set_fill_color(*(LIGHT if i % 2 == 0 else WHITE))
-            pdf.cell(label_w, 4.4, " " + (label if len(label) <= 40 else label[:38] + "…"), fill=True)
+            fs_, lab = FS, " " + label
+            while fs_ > 6.2 and pdf.get_string_width(lab) > label_w - 1:
+                fs_ -= 0.2
+                pdf.set_font(font, "", fs_)
+            while len(lab) > 6 and pdf.get_string_width(lab) > label_w - 1:
+                lab = lab[:-2] + "…"
+            pdf.cell(label_w, 4.8, lab, fill=True)
+            pdf.set_font(font, "", FS)
             for v in vals:
-                pdf.cell(col_w, 4.4, v, align="R", fill=True)
+                fs_ = FS
+                while fs_ > 6.2 and pdf.get_string_width(str(v)) > col_w - 1:
+                    fs_ -= 0.2
+                    pdf.set_font(font, "", fs_)
+                pdf.cell(col_w, 4.8, v, align="R", fill=True)
+                pdf.set_font(font, "", FS)
             pdf.ln()
 
     def _render_financials(self, pdf: EquityReportPDF, data: dict, a: dict):
@@ -2775,7 +2921,8 @@ class PDFReportGenerator:
         periods = [key_to_label(k) for k in fin.index]
         names = {"is": "KẾT QUẢ KINH DOANH", "bs": "CÂN ĐỐI KẾ TOÁN", "cf": "LƯU CHUYỂN TIỀN TỆ"}
         for st in ("is", "bs", "cf"):
-            keys = [k for k in STATEMENT_ITEMS[st] if k in fin.columns and fin[k].notna().any()]
+            keys = [k for k in STATEMENT_ITEMS[st] if k in fin.columns and fin[k].notna().any()
+                    and not (a.get("is_bank") and k == "operating_profit")]   # ngân hàng: không có dòng LN thuần HĐKD
             if not keys:
                 continue
             rows: List[Tuple[str, List[str]]] = [("§" + names[st], [])]
@@ -2798,9 +2945,10 @@ class PDFReportGenerator:
             pdf.set_text_color(*TEXT)
 
     def _render_ratios(self, pdf: EquityReportPDF, data: dict, a: dict):
-        from core.phan_tich_co_ban import RATIO_META
+        from core.phan_tich_co_ban import ratio_meta_for
         font = "VN" if pdf.has_vn else "Helvetica"
         summ = a.get("fin_summary") or {}
+        RATIO_META = ratio_meta_for(bool(summ.get("is_bank")))
         ratios = summ.get("ratios")
         pdf.h2("Chỉ số tài chính – tính trực tiếp từ BCTC")
         if ratios is None or ratios.empty:
@@ -2821,6 +2969,12 @@ class PDFReportGenerator:
             d = 0 if fmt in ("days", "vnd") else (1 if fmt == "%" else 2)
             rows.append((label, [_n(v, d, suf) for v in r[key].tolist()]))
         self._period_table(pdf, "Chỉ số", rows, periods)
+        if summ.get("is_bank"):
+            pdf.para("Ngân hàng: NIM tính xấp xỉ trên tổng tài sản bình quân (BCTC tóm tắt không tách tài sản sinh lãi); CIR = (tổng "
+                     "TN hoạt động − LN trước dự phòng) ÷ tổng TN hoạt động. Tỷ lệ nợ xấu (NPL), bao phủ nợ xấu (LLR) và an toàn "
+                     "vốn (CAR) nằm trong thuyết minh BCTC – nguồn dữ liệu hiện chưa có nên KHÔNG tính (không tự điền). Các chỉ "
+                     "số kiểu DN sản xuất (vòng quay tài sản, biên FCF, CFO/LNST…) không áp dụng cho ngân hàng nên được ẩn.",
+                     size=6.8, color=MUTED)
 
         # F-score, Z-score, định giá tại giá hiện tại
         pdf.ln(2)
@@ -3064,7 +3218,10 @@ class PDFReportGenerator:
             "earnings_quality": ("Chất lượng lợi nhuận (điều chỉnh)", "eq"),
         },
         "valuation": {"pe": ("P/E", "x"), "pb": ("P/B", "x"),
-                      "expected_return": ("Tổng LN kỳ vọng 12T (định giá lai)", "%")},
+                      "expected_return": ("Tổng LN kỳ vọng 12T (định giá lai)", "%"),
+                      "multiples": ("Bội số so với lịch sử 5 năm & ngành", None),
+                      "margin_of_safety": ("Biên an toàn (đầu thấp khoảng định giá)", "%"),
+                      "pe_rank": ("P/E xếp hạng % trong ngành (thấp = tốt)", "")},
         "technical": {
             "ma_alignment": ("Giá so với SMA20/50/200", None), "rsi": ("RSI(14)", ""),
             "macd": ("MACD histogram", ""), "volume": ("Khối lượng tương đối", "x"),
@@ -3228,14 +3385,11 @@ class PDFReportGenerator:
         rec, rec_color = recd["rating"], tuple(recd["color"])
 
         # ── Hiệu suất giá (None khi không đủ phiên) ──
-        ret_1m = ret_3m = ret_1y = None
-        closes_s = px_df["close"].dropna() if px_df is not None else pd.Series(dtype=float)
-        if len(closes_s) > 21:
-            ret_1m = (closes_s.iloc[-1] / closes_s.iloc[-22] - 1) * 100
-        if len(closes_s) > 63:
-            ret_3m = (closes_s.iloc[-1] / closes_s.iloc[-64] - 1) * 100
-        if len(closes_s) > 200:
-            ret_1y = (closes_s.iloc[-1] / closes_s.iloc[0] - 1) * 100
+        # 16/10/2026: tính theo NGÀY LỊCH (giá phiên gần nhất trước mốc 1/3/12 tháng). Trước đây "12T" = giá cuối ÷ giá ĐẦU
+        # chuỗi đã tải (~3 năm) → TCB ghi +118,8% trong khi biên 52 tuần chỉ 27.770–40.790.
+        _rets = calendar_returns(px_df)
+        ret_1m, ret_3m, ret_1y = _rets["1m"], _rets["3m"], _rets["1y"]
+        closes_s = px_df["close"].dropna() if px_df is not None and "close" in px_df.columns else pd.Series(dtype=float)
 
         idx_df, rs6 = analysis.get("index_history"), None
         if px_df is not None:

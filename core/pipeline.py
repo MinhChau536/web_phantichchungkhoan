@@ -240,28 +240,43 @@ class StockService:
         ve = ValuationEngine(self.symbol, price, self.repo.get_financial_ratios(self.symbol),
                              peer_stats=self.get_peer_stats(),
                              eps_override=val.get("eps_ttm"), bvps_override=val.get("bvps"))
-        # 14/10/2026: điểm Định giá lấy từ KẾT QUẢ ĐỊNH GIÁ LAI (tổng LN kỳ vọng 12T) – cùng nguồn với khuyến nghị 12T.
-        # Trước đây chấm P/E, P/B so với trung vị ngành (P/B chiếm 50% kể cả khi hồ sơ ngành loại P/B, vd FPT) → điểm
-        # Định giá 25/100 trong khi định giá 12T báo +47%. Định giá lai không đủ tin cậy → giữ cách chấm cũ (ghi rõ).
         inv = self._safe("investment", self.investment_analysis, None) or {}
         hv = inv.get("valuation") or {}
-        er = hv.get("expected_return")
-        if er is not None and hv.get("target_12m") and hv.get("confidence") in ("Cao", "Trung bình"):
-            lo, hi = -20.0, 40.0
-            sc = float(np.clip((er - lo) / (hi - lo) * 100, 0, 100))
-            score = {"score": round(sc), "method": "hybrid_expected_return",
-                     "note": f"Từ tổng LN kỳ vọng 12T {er:+.1f}% (0 điểm tại {lo:+.0f}%, 100 điểm tại {hi:+.0f}%), "
-                             f"độ tin cậy định giá {hv.get('confidence', '').lower()}",
-                     "components": {"expected_return": {"score": round(sc), "max": 100, "value": er,
-                                                        "basis": f"giá mục tiêu {hv['target_12m']:,.0f} · tin cậy {hv.get('confidence')}"}}}
+        ml = inv.get("multilayer") or {}
+        # 16/10/2026: MỘT điểm Định giá duy nhất trong app = lớp V của khung khuyến nghị (trước đây trụ cột Định giá chấm
+        # theo tổng LN kỳ vọng 12T, lớp V chấm theo bội số + biên an toàn + P/E ngành → hai số khác nhau trên cùng trang).
+        if ml.get("V") is not None:
+            comps = {}
+            for r in (ml.get("layers") or {}).get("V") or []:
+                comps[r.get("key") or r["name"]] = {"score": None if r["score"] is None else round(r["score"]), "max": 100,
+                                                    "value": r.get("value"), "basis": f"trọng số {r['weight']:g}%",
+                                                    **({} if r["score"] is not None else {"note": "Không dùng / thiếu dữ liệu"})}
+            score = {"score": round(ml["V"]), "method": "multilayer_V", "components": comps,
+                     "note": "Cùng điểm lớp Định giá (V) của khung khuyến nghị: 50% bội số so với lịch sử 5 năm & ngành · 30% "
+                             "biên an toàn từ đầu thấp khoảng định giá (chỉ khi định giá đủ tin cậy) · 20% P/E xếp hạng % "
+                             "trong ngành."}
         else:
             prof = hv.get("profile") or {}
             score = ve.compute_valuation_score(history=hv.get("history"), profile_weights=prof.get("weights_config"),
                                                profile_label=prof.get("label"))
             score["method"] = "relative_multiples"
-            score["note"] = ("Định giá lai chưa đủ tin cậy → chấm theo bội số: 50% so với lịch sử 5 năm của doanh nghiệp + "
+            score["note"] = ("Chưa chạy được khung khuyến nghị → chấm theo bội số: 50% so với lịch sử 5 năm của doanh nghiệp + "
                              "50% so với trung vị ngành (theo vốn hóa khi có), trọng số P/E–P/B theo hồ sơ ngành. "
                              + (score.get("note") or ""))
+        if "relative_valuation" not in score:
+            # 16/10/2026: điểm lấy từ lớp V nhưng P/E, P/B hiện tại vẫn cần cho bảng "So sánh với ngành" (PDF) – trước đây
+            # thiếu khóa này nên P/E, P/B của mã ra N/A.
+            prof = hv.get("profile") or {}
+            try:
+                ms = ve.compute_valuation_score(history=hv.get("history"), profile_weights=prof.get("weights_config"),
+                                                profile_label=prof.get("label"))
+                score["relative_valuation"] = ms.get("relative_valuation") or {}
+            except Exception as exc:                          # noqa: BLE001
+                logger.debug("relative_valuation failed: %s", exc)
+                score["relative_valuation"] = {}
+            for k in ("pe", "pb"):                             # dự phòng: bội số tính từ BCTC tại giá hiện tại
+                if score["relative_valuation"].get(k) is None and val.get(k) is not None:
+                    score["relative_valuation"][k] = val.get(k)
         score["multiples_from_statements"] = {k: val.get(k) for k in ("pe", "pb", "ps", "ev_ebitda", "dividend_yield",
                                                                        "market_cap", "enterprise_value", "as_of_period")}
         return {"available": True, "score": score}
@@ -483,7 +498,7 @@ class StockService:
                 "generated_at": datetime.now().isoformat(timespec="seconds")}
 
     def _multilayer(self, cfg, health, summ, annual, price_df, valuation, peers, company, risk, ratios, price) -> Dict[str, Any]:
-        """Khung khuyến nghị đa lớp (15/10/2026): MỘT nhãn duy nhất từ ma trận F × T – core/khuyen_nghi.py."""
+        """Khung khuyến nghị đa lớp (15/10/2026): MỘT nhãn duy nhất từ ma trận F × R – core/khuyen_nghi.py."""
         from core.khuyen_nghi import multilayer_recommendation
         prof = (valuation or {}).get("profile") or {}
         snap = (summ or {}).get("valuation") or {}
@@ -500,21 +515,44 @@ class StockService:
                                          universe_label="VN30 + cùng ngành")
 
     def relative_universe(self, peers: Optional[Dict[str, Any]] = None) -> Dict[str, pd.DataFrame]:
-        """Rổ so sánh cho điểm R: VN30 + các mã cùng ngành (giá ~420 ngày, cắt theo ngày định giá nếu có as_of).
+        """Rổ so sánh cho điểm R: VN30 + các mã cùng ngành (giá 365 ngày, cắt theo ngày định giá nếu có as_of).
         Chỉ cần lịch sử giá (đã có bộ nhớ đệm trong ngày) – lỗi ở một mã không làm hỏng cả rổ."""
         from core.du_lieu import BASKETS
         vn30 = next((v for k, v in BASKETS.items() if "VN30" in k), [])
         syms = list(dict.fromkeys([s for s in vn30] + list((peers or {}).get("peers") or [])))
         syms = [s for s in syms if s != self.symbol]
-        out: Dict[str, pd.DataFrame] = {}
-        for s in syms:
+        # Giá đến PHIÊN TRƯỚC (không ghép nến trong phiên) và 365 ngày (nằm trọn trong đoạn DNSE → không tốn lượt vnstock)
+        end = (self.as_of if self.as_of is not None else pd.Timestamp(datetime.now().date()) - pd.Timedelta(days=1))
+        end_s = str(pd.Timestamp(end).date())
+        # Nhớ theo (mã, ngày cuối) trên chính repository: giá đến hôm qua không đổi → phân tích mã thứ 2, 3… không tải lại.
+        memo = getattr(self.repo, "_universe_px", None)
+        if memo is None:
+            memo = {}
             try:
-                df = self._history(s, 420)
-                if df is not None and not df.empty:
-                    out[s] = df
+                setattr(self.repo, "_universe_px", memo)
+            except Exception:                              # noqa: BLE001 – repo không cho gắn thuộc tính
+                pass
+
+        def load(s):
+            if (s, end_s) in memo:
+                return s, memo[(s, end_s)]
+            try:
+                try:                                         # chỉ DNSE + CSDL, không tốn lượt vnstock
+                    df = self.repo.get_price_history(s, end_date=end_s, days=365, recent_only=True)
+                except TypeError:                             # repository khác (kiểm thử) chưa có tham số này
+                    df = self.repo.get_price_history(s, end_date=end_s, days=365)
+                df = self._cut_px(df) if self.as_of is not None else df
             except Exception as exc:                      # noqa: BLE001 – bỏ qua mã lỗi
                 logger.debug("universe price %s failed: %s", s, exc)
-        return out
+                return s, None
+            if df is not None and not df.empty:
+                memo[(s, end_s)] = df
+            return s, df
+
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=4) as ex:        # ~40 mã: tải song song (4 luồng – nhẹ cho DNSE)
+            res = list(ex.map(load, syms))
+        return {s: df for s, df in res if df is not None and not df.empty}
 
     def latest_shares(self, annual: Optional[pd.DataFrame] = None) -> Dict[str, Any]:
         """Số CP dùng để quy đổi giá trị về MỖI CỔ PHIẾU – phải cùng cơ sở với thị giá hiện hành (bước 8).

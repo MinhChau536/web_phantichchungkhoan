@@ -265,7 +265,28 @@ RATIO_META: Dict[str, tuple] = {
     "loan_to_deposit": ("Cho vay / Tiền gửi (LDR)", "Ngân hàng", "%", None),
     "equity_to_assets": ("VCSH / Tổng tài sản", "Ngân hàng", "%", True),
     "provision_to_income": ("Chi phí dự phòng / TN hoạt động", "Ngân hàng", "%", False),
+    "nim": ("NIM (xấp xỉ: TN lãi thuần / tổng TS bình quân)", "Ngân hàng", "%", True),
+    "cir": ("CIR (chi phí hoạt động / TN hoạt động)", "Ngân hàng", "%", False),
+    "credit_cost": ("Chi phí tín dụng (dự phòng / dư nợ bình quân)", "Ngân hàng", "%", False),
+    "nii_share": ("TN lãi thuần / Tổng TN hoạt động", "Ngân hàng", "%", None),
 }
+
+# 16/10/2026: chỉ số kiểu doanh nghiệp sản xuất – không có ý nghĩa với ngân hàng (nợ là nguyên liệu kinh doanh, không có
+# giá vốn/tồn kho; CFO ngân hàng biến động theo tiền gửi/cho vay) → ẩn khỏi bảng chỉ số của ngân hàng.
+BANK_HIDDEN_RATIOS = {"gross_margin", "operating_margin", "ebitda_margin", "roic", "current_ratio", "quick_ratio",
+                      "cash_ratio", "debt_to_equity", "net_debt_to_ebitda", "interest_coverage", "asset_turnover",
+                      "inventory_turnover", "dio", "dso", "dpo", "ccc", "fcf", "cfo_to_net_income", "fcf_margin",
+                      "capex_to_revenue"}
+
+
+def ratio_meta_for(bank: bool) -> Dict[str, tuple]:
+    """RATIO_META theo loại DN: ngân hàng → nhóm 'Ngân hàng' lên đầu, bỏ các chỉ số kiểu sản xuất."""
+    if not bank:
+        return dict(RATIO_META)
+    head = {k: v for k, v in RATIO_META.items() if v[1] == "Ngân hàng"}
+    rest = {k: v for k, v in RATIO_META.items() if v[1] != "Ngân hàng" and k not in BANK_HIDDEN_RATIOS}
+    return {**head, **rest}
+
 
 VALUATION_META: Dict[str, tuple] = {
     "pe": ("P/E", "x"), "pb": ("P/B", "x"), "ps": ("P/S", "x"), "ev_ebitda": ("EV/EBITDA", "x"),
@@ -513,6 +534,14 @@ def compute_ratios(wide: pd.DataFrame, period: Optional[str] = None) -> pd.DataF
         r["loan_to_deposit"] = _div(_col(wide, "customer_loans"), _col(wide, "customer_deposits"), pct=True)
         r["equity_to_assets"] = _div(eq, ta, pct=True)
         r["provision_to_income"] = _div(flow(_col(wide, "provision_expense").abs()), rev, pct=True)
+        # 16/10/2026: chỉ số đặc thù ngân hàng (BCTC tóm tắt không có tài sản sinh lãi, NPL, LLR, CAR → không tính các số đó)
+        nii = flow(_col(wide, "net_interest_income"))
+        prov = flow(_col(wide, "provision_expense").abs())
+        pbt_b = flow(_col(wide, "profit_before_tax"))
+        r["nim"] = _div(nii, avg(ta), pct=True)                       # XẤP XỈ: TN lãi thuần / tổng tài sản bình quân
+        r["cir"] = _div(rev - (pbt_b + prov), rev, pct=True)          # CP hoạt động = TOI − LN trước dự phòng
+        r["credit_cost"] = _div(prov, avg(_col(wide, "customer_loans")), pct=True)
+        r["nii_share"] = _div(nii, rev, pct=True)
 
     r = r.replace([np.inf, -np.inf], np.nan)
     return r.dropna(axis=1, how="all")

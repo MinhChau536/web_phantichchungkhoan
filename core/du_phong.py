@@ -249,6 +249,44 @@ class FinancialForecaster:
                 W.append(f"VCSH kỳ gốc lấy từ bảng cân đối Q{kq % 10}/{kq // 10} (mới nhất đã công bố); lợi nhuận/dòng tiền "
                          f"vẫn theo {base['label']}.")
         res["base"] = {**base, "end": str(base["end"].date())}
+        # 16/10/2026: SỐ THỰC HIỆN của kỳ gốc (năm tài chính hoặc TTM 4 quý) để bảng dự phóng in cột "TH" – trước đây bảng
+        # tra số TH trong BCTC NĂM theo khóa kỳ gốc; kỳ gốc là TTM (khóa quý) thì không tìm thấy → cả cột N/A.
+        nip_b0 = _num(base_row.get("net_income_parent"))
+        nip_b0 = nip_b0 if nip_b0 is not None else _num(base_row.get("net_income"))
+        eq_b0 = _num(base_row.get("equity"))
+        mi_b0 = _num(base_row.get("minority_interest")) or 0.0
+        eq_prev = ta_prev = None                               # VCSH, tổng TS 1 năm trước kỳ gốc (cùng quý / năm trước)
+        prev_k = int(base["key"]) - 10
+        for src in ((q,) if base["kind"] == "TTM" else ()) + (a,):
+            if src is not None and not src.empty and prev_k in src.index:
+                eq_prev = _num(src.loc[prev_k].get("equity"))
+                ta_prev = _num(src.loc[prev_k].get("total_assets"))
+                if eq_prev is not None:
+                    eq_prev -= _num(src.loc[prev_k].get("minority_interest")) or 0.0
+                    break
+        eq_par = eq_b0 - mi_b0 if eq_b0 is not None else None
+        avg_eq = (eq_par + eq_prev) / 2 if eq_par and eq_prev else eq_par
+        divp = _num(base_row.get("dividends_paid"))
+        res["base"]["actual"] = {
+            "revenue": _num(base_row.get("revenue")),
+            "total_operating_income": _num(base_row.get("total_operating_income")),
+            "net_income_parent": nip_b0,
+            "eps": nip_b0 / shares if nip_b0 is not None else None,
+            "roe": nip_b0 / avg_eq if nip_b0 is not None and avg_eq and avg_eq > 0 else None,
+            "dps": abs(divp) / shares if divp else None,
+            "bvps": eq_par / shares if eq_par else None,
+            "equity_parent": eq_par,
+            "customer_loans": _num(base_row.get("customer_loans")),
+            "net_interest_income": _num(base_row.get("net_interest_income")),
+            "provision": abs(_num(base_row.get("provision_expense")) or 0) or None,
+            "total_assets": _num(base_row.get("total_assets")),
+        }
+        _toi0, _pbt0 = res["base"]["actual"]["total_operating_income"], _num(base_row.get("profit_before_tax"))
+        _nii0, _ta0 = res["base"]["actual"]["net_interest_income"], res["base"]["actual"]["total_assets"]
+        if _nii0 is not None and _ta0:
+            res["base"]["actual"]["nim"] = _nii0 / ((_ta0 + ta_prev) / 2 if ta_prev else _ta0)
+        if _toi0 and _pbt0 is not None and res["base"]["actual"]["provision"] is not None:
+            res["base"]["actual"]["cir"] = 1 - (_pbt0 + res["base"]["actual"]["provision"]) / _toi0
         months_old = (as_of_ts.year - base["end"].year) * 12 + as_of_ts.month - base["end"].month
         if months_old > self.cfg["valuation"]["stale_months"]:
             W.append(f"Kỳ gốc {base['label']} đã cũ ~{months_old} tháng so với ngày dự báo → độ tin cậy thấp.")
@@ -323,6 +361,8 @@ class FinancialForecaster:
             ntm = _interp(years, base_row, model, months_to_end, eq0, shares)
             res["scenarios"][s] = {"label": SCEN_LABEL[s], "assumptions": self._explain(model, res, p, s),
                                    "years": years, "ntm": ntm}
+            if model == "bank":
+                self._bank_nii(res, a, base_row, years)
             fy0 = base["end"]
             for t, y in enumerate(years, start=1):          # nhãn kỳ: năm t kết thúc tại cuối kỳ gốc + t năm
                 y["period_end"] = str((fy0 + pd.DateOffset(years=t)).date())
@@ -541,6 +581,32 @@ class FinancialForecaster:
             res["drivers"]["provision_pct_toi"] = {"value": pr or 0.0, "basis": f"trung vị {n_pr} năm dự phòng/TOI"}
             self._gap(res, "dư nợ cho vay", "không có số liệu → dự phòng tính theo tỷ lệ trên TOI", "trung bình")
         return True
+
+    def _bank_nii(self, res, a, base_row, years) -> None:
+        """16/10/2026 (lựa chọn B): TÁCH thu nhập lãi thuần (NII) và NIM cho bảng dự phóng ngân hàng.
+        Mô hình ngân hàng dự phóng GỘP tổng thu nhập hoạt động (TOI) → NII_t = TOI_t × tỷ trọng NII/TOI trung vị 3 năm gần
+        nhất; tổng tài sản tăng cùng tốc độ dư nợ cho vay; NIM_t (xấp xỉ) = NII_t ÷ tổng tài sản bình quân. Đây là GIẢ ĐỊNH
+        trình bày (không đổi LNST/định giá) – ghi rõ ở drivers['nii_share']."""
+        toi_a, nii_a = _col(a, "total_operating_income"), _col(a, "net_interest_income")
+        share, n = _median_ratio(nii_a, toi_a, 3)
+        if share is None or not (0 < share < 1.2):
+            share = None
+        else:
+            res["drivers"]["nii_share"] = {"value": share, "basis": f"trung vị {n} năm TN lãi thuần / tổng TN hoạt động"}
+        ta0, loans0 = _num(base_row.get("total_assets")), _num(base_row.get("customer_loans"))
+        prev_ta, prev_loans = ta0, loans0
+        for y in years:
+            toi = _num(y.get("total_operating_income"))
+            y["net_interest_income"] = toi * share if toi is not None and share is not None else None
+            loans = _num(y.get("customer_loans"))
+            y["credit_growth"] = loans / prev_loans - 1 if loans and prev_loans else None
+            ta = prev_ta * loans / prev_loans if prev_ta and loans and prev_loans else None
+            y["total_assets"] = ta
+            y["nim"] = (y["net_interest_income"] / ((prev_ta + ta) / 2)
+                        if y["net_interest_income"] is not None and ta and prev_ta else None)
+            ppop = _num(y.get("ppop"))
+            y["cir"] = 1 - ppop / toi if ppop is not None and toi else None
+            prev_ta, prev_loans = ta, loans
 
     def _drivers_roe(self, res, a, base_row, eq_s) -> bool:
         nip = _col(a, "net_income_parent")

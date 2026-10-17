@@ -611,13 +611,16 @@ Khung khuyến nghị cổ phiếu ĐA LỚP – MỘT nhãn duy nhất cho mỗ
 
 Theo tài liệu "Khung khuyến nghị cổ phiếu đa lớp" v1.0 (người dùng cung cấp):
   Bước 1 – Bộ lọc loại trừ: vướng điều kiện → không được nhận MUA / TÍCH LŨY TỪNG PHẦN; thiếu dữ liệu → KHÔNG ĐỦ DỮ LIỆU.
-  Bước 2 – Chấm 4 lớp 0–100: Chất lượng (Q), Định giá (V), Tăng trưởng (G), Thời điểm (T).
+  Bước 2 – Chấm 3 lớp nền tảng 0–100: Chất lượng (Q), Định giá (V), Tăng trưởng (G).
            F = 0,40·Q + 0,35·V + 0,25·G − điểm trừ rủi ro (tối đa 15).
-  Bước 3 – Ma trận F × T:
-                     T ≥ 50            T < 50
-       F ≥ 70        MUA               TÍCH LŨY TỪNG PHẦN
-       55 ≤ F < 70   NẮM GIỮ           THEO DÕI
-       F < 55        THEO DÕI          GIẢM TỶ TRỌNG / TRÁNH
+           Trục So với thị trường (R, 16/10/2026): phân vị trong rổ VN30 + cùng ngành
+           (động lượng 6T & 12-1T 60%, vị thế MA200 25%, LN kỳ vọng − Ke 15%); rổ < 10 mã → trục Thời điểm tuyệt đối.
+  Bước 3 – Ma trận F × R:
+                     R ≥ 60      40 ≤ R < 60          R < 40
+       F ≥ 65        MUA         TÍCH LŨY TỪNG PHẦN   THEO DÕI
+       55 ≤ F < 65   NẮM GIỮ     THEO DÕI             THEO DÕI
+       F < 55        THEO DÕI    GIẢM TỶ TRỌNG/TRÁNH  GIẢM TỶ TRỌNG/TRÁNH
+       MUA chỉ khi VN-Index trên MA200, LN kỳ vọng > Ke và định giá đủ tin cậy; nếu không → TÍCH LŨY TỪNG PHẦN.
   + khoảng định giá (thấp–cao), biên an toàn từ đầu thấp, độ phân tán > 40% → độ tin cậy định giá thấp.
 
 Giới hạn (ghi rõ trong kết quả, không bịa số):
@@ -820,22 +823,26 @@ def relative_layer(symbol: str, price_df: Optional[pd.DataFrame], index_df: Opti
     out: Dict[str, Any] = {"score": None, "components": [], "notes": [], "levels": {}, "rank": None, "universe_n": 0,
                            "market": {}, "hurdle": {}}
     rows = {}
+    MIN_LEN = 220            # ~1 năm giao dịch (rổ lấy 365 ngày từ DNSE để không tốn lượt gọi vnstock)
+
+    def feats(c):
+        n = min(len(c), 250)
+        return {"ret6": float(c.iloc[-1] / c.iloc[-126] - 1), "ret12_1": float(c.iloc[-21] / c.iloc[-n] - 1),
+                "ma200": float(c.iloc[-1] / c.tail(200).mean() - 1)}
     for sym, df in (universe or {}).items():
         c = _closes(df)
-        if c is None or len(c) < 252:
+        if c is None or len(c) < MIN_LEN:
             continue
-        rows[sym] = {"ret6": float(c.iloc[-1] / c.iloc[-126] - 1), "ret12_1": float(c.iloc[-21] / c.iloc[-252] - 1),
-                     "ma200": float(c.iloc[-1] / c.tail(200).mean() - 1)}
+        rows[sym] = feats(c)
     me = _closes(price_df)
-    if me is not None and len(me) >= 252:
-        rows[symbol] = {"ret6": float(me.iloc[-1] / me.iloc[-126] - 1), "ret12_1": float(me.iloc[-21] / me.iloc[-252] - 1),
-                        "ma200": float(me.iloc[-1] / me.tail(200).mean() - 1)}
+    if me is not None and len(me) >= MIN_LEN:
+        rows[symbol] = feats(me)
         p = float(me.iloc[-1]); m200 = float(me.tail(200).mean())
         out["levels"] = {"price": p, "ma200": m200, "ma50": float(me.tail(50).mean())}
     n_min = int(cfg.get("min_universe", 10))
     out["universe_n"] = len(rows)
     if symbol not in rows or len(rows) < n_min:
-        out["notes"].append(f"Chưa đủ dữ liệu giá của {universe_label} (cần ≥ {n_min} mã có ≥ 252 phiên) – chưa xếp hạng được.")
+        out["notes"].append(f"Chưa đủ dữ liệu giá của {universe_label} (cần ≥ {n_min} mã có ≥ {MIN_LEN} phiên) – chưa xếp hạng được.")
         return out
     others = {k: v for k, v in rows.items()}
     def pr(key):
@@ -902,6 +909,48 @@ def valuation_range(valuation: Dict[str, Any]) -> Dict[str, Any]:
             "methods": [m.get("name") for m in (valuation or {}).get("methods") or []]}
 
 
+def _phrase(layer: str, r: Dict[str, Any], good: bool, universe_label: str = "rổ so sánh") -> str:
+    """Câu lý do ủng hộ / rủi ro dễ đọc cho một thành phần điểm (thay cho 'Tên – 78/100')."""
+    n, sc = r["name"], r["score"]
+    tail = f" ({sc:.0f}/100)"
+    det = r.get("detail")
+    table = [
+        ("Khả năng sinh lời", "Khả năng sinh lời tốt (ROE, ROA, biên lợi nhuận)", "Khả năng sinh lời thấp (ROE, ROA, biên lợi nhuận)"),
+        ("Khả năng thanh toán", "Khả năng thanh toán ngắn hạn tốt", "Khả năng thanh toán ngắn hạn yếu"),
+        ("Cơ cấu vốn", "Cơ cấu vốn an toàn, đòn bẩy thấp", "Đòn bẩy tài chính cao"),
+        ("Chất lượng dòng tiền", "Lợi nhuận chuyển thành tiền tốt (CFO, FCF)", "Lợi nhuận chưa chuyển thành tiền (CFO, FCF yếu)"),
+        ("An toàn vốn", "Vốn đệm an toàn tốt", "Vốn đệm an toàn mỏng"),
+        ("Chất lượng tài sản", "Chất lượng tài sản tốt (nợ xấu thấp)", "Chất lượng tài sản đáng lo (nợ xấu cao)"),
+        ("Huy động & cho vay", "Cơ cấu huy động – cho vay lành mạnh", "Cơ cấu huy động – cho vay căng"),
+        ("ROE so với ngành", "ROE thuộc nhóm cao trong ngành", "ROE thấp hơn phần lớn doanh nghiệp cùng ngành"),
+        ("Bội số", "Định giá rẻ so với lịch sử 5 năm và ngành (P/E, P/B…)", "Định giá đắt so với lịch sử 5 năm và ngành (P/E, P/B…)"),
+        ("P/E so với ngành", "P/E thấp hơn phần lớn doanh nghiệp cùng ngành", "P/E cao hơn phần lớn doanh nghiệp cùng ngành"),
+        ("Nhóm tăng trưởng", "Doanh thu và lợi nhuận tăng trưởng tốt", "Tăng trưởng doanh thu/lợi nhuận yếu"),
+        ("Động lượng 6 & 12", f"Đà tăng giá 6–12 tháng mạnh hơn phần lớn {universe_label}",
+         f"Đà giá 6–12 tháng yếu hơn phần lớn {universe_label}"),
+        ("Giá so với MA200", f"Vị thế giá so với MA200 tốt hơn phần lớn {universe_label}",
+         f"Vị thế giá so với MA200 kém hơn phần lớn {universe_label}"),
+        ("LN kỳ vọng so với chi phí vốn", "Lợi nhuận kỳ vọng vượt chi phí vốn chủ sở hữu (Ke)",
+         "Lợi nhuận kỳ vọng chưa bù được chi phí vốn chủ sở hữu (Ke)"),
+        ("Động lượng 12–1", "Giá tăng mạnh hơn VN-Index trong 12 tháng", "Giá kém hơn VN-Index trong 12 tháng"),
+        ("Xu hướng MA50/MA200", "Xu hướng giá tăng (trên MA50/MA200)", "Xu hướng giá giảm (dưới MA50/MA200)"),
+        ("Xu hướng khối lượng", "Khối lượng ủng hộ chiều giá", "Khối lượng không ủng hộ chiều giá"),
+    ]
+    if n.startswith("Biên an toàn"):
+        mos = r.get("value")
+        txt = (f"Giá thấp hơn đầu dưới khoảng định giá {abs(mos):.0f}%" if good and mos is not None else
+               f"Giá cao hơn đầu dưới khoảng định giá {abs(mos):.0f}% – biên an toàn mỏng" if mos is not None else
+               ("Biên an toàn tốt" if good else "Biên an toàn mỏng"))
+        return txt + tail
+    if n.startswith("Biên LN gộp"):
+        return n.replace("Biên LN gộp", "Biên LN gộp " + ("cải thiện" if good else "thu hẹp")) + tail
+    for key, pos, neg in table:
+        if key in n:
+            return (pos if good else neg) + (f" – {det}" if det else "") + tail
+    return f"{LAYER_NAMES.get(layer, layer)}: {n}" + tail
+
+
+
 def multilayer_recommendation(*, health: Dict[str, Any], summary: Dict[str, Any], annual: Optional[pd.DataFrame],
                               quarterly: Optional[pd.DataFrame], price_df: Optional[pd.DataFrame],
                               index_df: Optional[pd.DataFrame], valuation: Dict[str, Any], multiples: Dict[str, Any],
@@ -965,15 +1014,16 @@ def multilayer_recommendation(*, health: Dict[str, Any], summary: Dict[str, Any]
         if k != "growth":
             qparts.append((f"{g['label']} (sức khỏe TC)", _num_multilayer_reco(g.get("score")), float(g.get("weight") or 0)))
     wq = sum(w for _, _, w in qparts) or 1.0
-    qparts = [(n, s, w / wq * 60) for n, s, w in qparts]           # 60% từ các nhóm sức khỏe tài chính
+    # 16/10/2026: bỏ Piotroski F-score khỏi Q – 9 tiêu chí của F-score (ROA, CFO, đòn bẩy, thanh toán, biên gộp, vòng quay)
+    # trùng gần hết với 4 nhóm sinh lời/thanh toán/cơ cấu vốn/dòng tiền → bị tính 2 lần. F-score vẫn hiển thị và vẫn là
+    # điều kiện làm sai luận điểm.
+    qparts = [(n, s, w / wq * 70) for n, s, w in qparts]           # 70% từ các nhóm sức khỏe tài chính
     pio = (summary or {}).get("piotroski") or {}
-    if not bank and not other_fin and _num_multilayer_reco(pio.get("score")) is not None and pio.get("max"):
-        qparts.append((f"Piotroski F-score {pio['score']}/{pio['max']}", _num_multilayer_reco(pio["score"]) / float(pio["max"]) * 100, 20))
     roe = ((peers or {}).get("self") or {}).get("roe")
     if roe is None and ratios is not None and not ratios.empty and "roe" in ratios.columns:
         roe = _num_multilayer_reco(ratios["roe"].dropna().iloc[-1]) if ratios["roe"].notna().any() else None
     roe_p = percentile_rank(roe, peer_vals("roe"), True, min_peers)
-    qparts.append((f"ROE so với ngành (thứ hạng %)", roe_p, 20))
+    qparts.append((f"ROE so với ngành (thứ hạng %)", roe_p, 30))
     Q, q_rows = _avg(qparts)
     # V – Định giá
     vr = valuation_range(valuation)
@@ -989,6 +1039,9 @@ def multilayer_recommendation(*, health: Dict[str, Any], summary: Dict[str, Any]
     pe_p = percentile_rank(_num_multilayer_reco(rel.get("pe")), peer_vals("pe"), False, min_peers) if _num_multilayer_reco(rel.get("pe")) and rel.get("pe") > 0 else None
     vparts.append(("P/E so với ngành (thứ hạng %, thấp = tốt)", pe_p, 20))
     V, v_rows = _avg(vparts)
+    for r_, k_, val_ in zip(v_rows, ("multiples", "margin_of_safety", "pe_rank"),
+                            (None, vr.get("margin_of_safety") if use_mos else None, pe_p)):
+        r_["key"], r_["value"] = k_, val_
     if not use_mos:
         notes.append("Định giá chưa đủ tin cậy → lớp Định giá không dùng biên an toàn, chỉ dùng bội số.")
     # G – Tăng trưởng
@@ -1029,7 +1082,7 @@ def multilayer_recommendation(*, health: Dict[str, Any], summary: Dict[str, Any]
         F = round(sum(v * wf[k] for k, v in have.items()) / sum(wf[k] for k in have) - penalty, 1)
 
     # ── Bước 3: ma trận F × R + điều kiện MUA ──
-    fs, fm = float(c.get("f_strong", 70)), float(c.get("f_mid", 55))
+    fs, fm = float(c.get("f_strong", 65)), float(c.get("f_mid", 55))
     rs, rw = float(c.get("r_strong", 60)), float(c.get("r_weak", 40))
     blocked = False
     gates: List[str] = []
@@ -1045,7 +1098,7 @@ def multilayer_recommendation(*, health: Dict[str, Any], summary: Dict[str, Any]
         f_txt = {"strong": "doanh nghiệp tốt", "mid": "nền tảng trung bình khá", "weak": "nền tảng yếu"}[row]
         r_txt = {"good": "mạnh hơn thị trường", "mid": "ngang thị trường", "bad": "yếu hơn thị trường"}[col]
         rk = tl.get("rank")
-        rk_txt = f", xếp hạng {rk[0]}/{rk[1]} trong {universe_label}" if rk and not tl.get("fallback") else ""
+        rk_txt = f", xếp hạng sức mạnh giá {rk[0]}/{rk[1]} trong {universe_label}" if rk and not tl.get("fallback") else ""
         why = f"{f_txt[0].upper() + f_txt[1:]} (F {F:.0f}) và cổ phiếu {r_txt} (R {R:.0f}/100{rk_txt}) → {label}."
         if row == "strong" and col == "bad":
             why += f" Chờ R vượt {rw:.0f} hoặc giá lấy lại MA200 rồi xem xét lại."
@@ -1054,8 +1107,19 @@ def multilayer_recommendation(*, health: Dict[str, Any], summary: Dict[str, Any]
         if label == "MUA":
             mk = tl.get("market") or {}
             hd = tl.get("hurdle") or {}
+            rk_ = tl.get("rank")
+            top = float(c.get("leader_top_pct", 0.30))
+            leader = bool(rk_ and not tl.get("fallback") and rk_[1] and top > 0 and rk_[0] <= math.ceil(top * rk_[1]))
             if c.get("market_gate", True) and mk.get("below"):
-                gates.append(f"VN-Index ({mk['close']:,.0f}) đang dưới MA200 ({mk['ma200']:,.0f}) – thị trường chung xu hướng giảm")
+                if leader:
+                    # 16/10/2026: cổ phiếu DẪN DẮT (top 30% sức mạnh giá trong rổ) được MUA dù thị trường chung dưới MA200
+                    why += (f" VN-Index ({mk['close']:,.0f}) đang dưới MA200 ({mk['ma200']:,.0f}) nhưng cổ phiếu thuộc nhóm dẫn "
+                            f"dắt (hạng {rk_[0]}/{rk_[1]}, top {top:.0%} rổ) → vẫn đủ điều kiện thị trường.")
+                    notes.append("Thị trường chung đang dưới MA200 – MUA nhờ cổ phiếu thuộc nhóm dẫn dắt; nên giải ngân "
+                                 "từng phần và theo dõi sát mức cắt lỗ.")
+                else:
+                    gates.append(f"VN-Index ({mk['close']:,.0f}) đang dưới MA200 ({mk['ma200']:,.0f}) – thị trường chung xu "
+                                 f"hướng giảm và cổ phiếu chưa thuộc nhóm dẫn dắt (top {top:.0%} rổ)")
             if hd.get("pass") is None:
                 gates.append("định giá chưa đủ tin cậy để xác nhận lợi nhuận kỳ vọng vượt chi phí vốn")
             elif not hd["pass"]:
@@ -1069,11 +1133,12 @@ def multilayer_recommendation(*, health: Dict[str, Any], summary: Dict[str, Any]
             label = "THEO DÕI"
 
     # ── nội dung bắt buộc ──
-    comp_all = [(f"{LAYER_NAMES[k]}: {r['name']}", r["score"]) for k, rows_ in (("Q", q_rows), ("V", v_rows), ("G", g_rows),
-                                                                               ("R", tl["components"]))
+    comp_all = [(k, r) for k, rows_ in (("Q", q_rows), ("V", v_rows), ("G", g_rows), ("R", tl["components"]))
                 for r in rows_ if r["score"] is not None]
-    pros = [f"{n} – {s:.0f}/100" for n, s in sorted(comp_all, key=lambda x: -x[1]) if s >= 60][:3]
-    cons = [f"{n} – {s:.0f}/100" for n, s in sorted(comp_all, key=lambda x: x[1]) if s < 45][:3]
+    pros = [_phrase(k, r, True, universe_label) for k, r in sorted(comp_all, key=lambda x: -x[1]["score"])
+            if r["score"] >= 60][:3]
+    cons = [_phrase(k, r, False, universe_label) for k, r in sorted(comp_all, key=lambda x: x[1]["score"])
+            if r["score"] < 45][:3]
     cons += [i["text"] for i in (risk or {}).get("items", []) if i.get("severity") in ("Nghiêm trọng", "Cao")][:max(0, 3 - len(cons))]
     inval = []
     if _num_multilayer_reco(pio.get("score")) is not None and not bank:
@@ -1117,8 +1182,8 @@ def multilayer_recommendation(*, health: Dict[str, Any], summary: Dict[str, Any]
 MATRIX = {("strong", "good"): "MUA", ("strong", "mid"): "TÍCH LŨY TỪNG PHẦN", ("strong", "bad"): "THEO DÕI",
           ("mid", "good"): "NẮM GIỮ", ("mid", "mid"): "THEO DÕI", ("mid", "bad"): "THEO DÕI",
           ("weak", "good"): "THEO DÕI", ("weak", "mid"): "GIẢM TỶ TRỌNG / TRÁNH", ("weak", "bad"): "GIẢM TỶ TRỌNG / TRÁNH"}
-MATRIX_ROWS = [("F ≥ 70 (nền tảng mạnh)", "MUA", "TÍCH LŨY TỪNG PHẦN", "THEO DÕI"),
-               ("55 ≤ F < 70 (trung bình khá)", "NẮM GIỮ", "THEO DÕI", "THEO DÕI"),
+MATRIX_ROWS = [("F ≥ 65 (nền tảng mạnh)", "MUA", "TÍCH LŨY TỪNG PHẦN", "THEO DÕI"),
+               ("55 ≤ F < 65 (trung bình khá)", "NẮM GIỮ", "THEO DÕI", "THEO DÕI"),
                ("F < 55 (nền tảng yếu)", "THEO DÕI", "GIẢM TỶ TRỌNG / TRÁNH", "GIẢM TỶ TRỌNG / TRÁNH")]
 
 
